@@ -1,0 +1,30 @@
+{
+  "name": "dietcode",
+  "version": "0.1.0",
+  "description": "Inspectable DAG-based canvas for multi-LLM resource metrics, HITL steering, and real-time tokenomics",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:start": "electron ."
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.4.2",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.16.0",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^34.2.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "vite": "^6.1.0",
+    "wait-on": "^8.0.2"
+  }
+}
