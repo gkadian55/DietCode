@@ -10,12 +10,43 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping
 
 import litellm
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+# DietCode uses stable IDs for pricing and UI state. LiteLLM requires provider
+# qualified names for providers such as Google and Anthropic.
+PRIMARY_MODEL = os.getenv("DIETCODE_PRIMARY_MODEL", "gemini-3-8-flash")
+LOCAL_MODEL = os.getenv("DIETCODE_LOCAL_MODEL", "ollama/qwen2.5-coder:7b")
+OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434")
+LOCAL_ROUTING_ENABLED = os.getenv("DIETCODE_LOCAL_ROUTING", "true").lower() in {
+    "1", "true", "yes", "on"
+}
+LOCAL_TASK_TERMS = (
+    "boilerplate", "documentation", "document", "format", "lint",
+    "unit test", "tests", "testing", "qa", "frontend", "client ui",
+    "dashboard", "simple", "crud", "schema migration",
+)
+PRIMARY_TASK_TERMS = (
+    "architecture", "protocol", "security", "distributed", "algorithm",
+    "fault-tolerant", "observability", "system design", "deep audit",
+)
+LITELLM_MODEL_ALIASES = {
+    "claude-3-5-sonnet": "anthropic/claude-3-5-sonnet-20241022",
+    "claude-3-5-haiku": "anthropic/claude-3-5-haiku-20241022",
+    "gpt-4o": "openai/gpt-4o",
+    "gpt-4o-mini": "openai/gpt-4o-mini",
+    "gemini-2-0-flash": "gemini/gemini-2.0-flash",
+    "gemini-3-8-flash": "gemini/gemini-3.8-flash",
+    "gemini-1-5-pro": "gemini/gemini-1.5-pro",
+}
 
 
 @dataclass(frozen=True)
@@ -96,7 +127,10 @@ class DAGExecutor:
             # This guard covers orchestration failures as well as API failures
             # that escaped the request retry loop.
             logger.exception("Unexpected failure while running task %s", spec.task_id)
-            result = self._failed_result(spec, f"Unexpected executor error: {exc}")
+            result = self._failed_result(
+                spec,
+                f"Unexpected executor error: {self._exception_text(exc)}",
+            )
 
         completion_futures[spec.task_id].set_result(result)
 
@@ -108,7 +142,8 @@ class DAGExecutor:
         messages = self._build_messages(spec.prompt, parent_results)
 
         try:
-            response = await self._complete_with_retries(spec.model, messages)
+            routed_model = self._route_model(spec.model, spec.prompt)
+            response = await self._complete_with_retries(routed_model, messages)
             text = self._response_text(response)
             prompt_tokens, completion_tokens = self._response_usage(response)
             return {
@@ -118,25 +153,34 @@ class DAGExecutor:
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
                 "model": spec.model,
+                "routed_model": routed_model,
                 "error": None,
             }
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.error("Task %s failed: %s", spec.task_id, exc)
-            return self._failed_result(spec, str(exc))
+            return self._failed_result(spec, self._exception_text(exc))
 
     async def _complete_with_retries(
         self,
         model: str,
         messages: list[dict[str, str]],
     ) -> Any:
+        litellm_model = LITELLM_MODEL_ALIASES.get(model, model)
+        request_options = {}
+        if litellm_model.startswith("ollama/"):
+            request_options["api_base"] = OLLAMA_API_BASE
         last_error: Exception | None = None
         for attempt in range(self._max_retries + 1):
             try:
                 async with self._semaphore:
                     return await asyncio.wait_for(
-                        litellm.acompletion(model=model, messages=messages),
+                        litellm.acompletion(
+                            model=litellm_model,
+                            messages=messages,
+                            **request_options,
+                        ),
                         timeout=self._request_timeout,
                     )
             except asyncio.CancelledError:
@@ -157,6 +201,25 @@ class DAGExecutor:
 
         assert last_error is not None
         raise last_error
+
+    @staticmethod
+    def _route_model(requested_model: str, prompt: str) -> str:
+        """Route routine work locally while reserving the primary model for complexity."""
+        if requested_model.startswith("ollama/"):
+            return requested_model
+        if not LOCAL_ROUTING_ENABLED:
+            return PRIMARY_MODEL
+
+        normalized_prompt = prompt.lower()
+        if any(term in normalized_prompt for term in PRIMARY_TASK_TERMS):
+            return PRIMARY_MODEL
+        if any(term in normalized_prompt for term in LOCAL_TASK_TERMS):
+            return LOCAL_MODEL
+        return PRIMARY_MODEL
+
+    @staticmethod
+    def _exception_text(exc: Exception) -> str:
+        return str(exc) or repr(exc) or type(exc).__name__
 
     @staticmethod
     def _build_messages(
@@ -280,6 +343,7 @@ class DAGExecutor:
             "completion_tokens": 0,
             "total_tokens": 0,
             "model": spec.model,
+            "routed_model": None,
             "error": error,
         }
 
@@ -315,7 +379,7 @@ async def main() -> None:
             },
             "tests": {
                 "prompt": "Write tests for the service.",
-                "model": "gemini/gemini-2.0-flash",
+                "model": "gemini/gemini-3.8-flash",
                 "depends_on": ["implementation"],
             },
         }
