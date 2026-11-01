@@ -3,6 +3,39 @@ import { applyNodeChanges, applyEdgeChanges, addEdge } from '@xyflow/react';
 
 const API_BASE = 'http://127.0.0.1:8765';
 
+// Convert React Flow's node/edge representation to the execution engine's
+// dependency map. Edges are authoritative because users can edit them directly.
+export const buildExecutionGraph = (nodes, edges) => {
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const dependencies = new Map(nodes.map((node) => [node.id, []]));
+
+  edges.forEach((edge) => {
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
+      throw new Error(`Execution graph contains an unknown edge: ${edge.id || 'unnamed'}`);
+    }
+    dependencies.get(edge.target).push(edge.source);
+  });
+
+  return Object.fromEntries(nodes.map((node) => {
+    const data = node.data || {};
+    const model = data.assignedAgent || data.recommendedAgent?.id;
+    if (!model) {
+      throw new Error(`Task ${node.id} does not have an assigned model`);
+    }
+
+    const title = data.title || 'Untitled task';
+    const description = data.description || '';
+    return [
+      node.id,
+      {
+        prompt: description ? `${title}\n\n${description}` : title,
+        model,
+        depends_on: dependencies.get(node.id)
+      }
+    ];
+  }));
+};
+
 export const useDagStore = create((set, get) => ({
   nodes: [],
   edges: [],
@@ -26,6 +59,8 @@ export const useDagStore = create((set, get) => ({
   selectedNode: null,
   goalInput: 'Distributed Multi-Agent Architecture for Real-Time Tokenomics and Fault-Tolerant Observability',
   isLoading: false,
+  isExecuting: false,
+  executionError: null,
   backendStatus: 'checking',
   isAddModalOpen: false,
   newSubtaskParentId: null,
@@ -34,6 +69,82 @@ export const useDagStore = create((set, get) => ({
   setGoalInput: (goal) => set({ goalInput: goal }),
   setSelectedNode: (node) => set({ selectedNode: node }),
   setAddModalOpen: (open, parentId = null) => set({ isAddModalOpen: open, newSubtaskParentId: parentId }),
+  getExecutionGraph: () => {
+    const { nodes, edges } = get();
+    return buildExecutionGraph(nodes, edges);
+  },
+
+  executeGraph: async () => {
+    const { nodes, edges } = get();
+    if (nodes.length === 0) return { results: {} };
+
+    let graph;
+    try {
+      graph = buildExecutionGraph(nodes, edges);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invalid execution graph';
+      console.error('[Store] Failed to build execution graph:', err);
+      set({ executionError: message });
+      return null;
+    }
+
+    set({
+      isExecuting: true,
+      executionError: null,
+      nodes: nodes.map((node) => ({
+        ...node,
+        data: { ...node.data, executionStatus: 'queued', executionError: null }
+      }))
+    });
+
+    try {
+      const res = await fetch(`${API_BASE}/api/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ graph })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || `HTTP error! status: ${res.status}`);
+      }
+
+      const results = data.results || {};
+      const executedNodes = get().nodes.map((node) => {
+        const result = results[node.id];
+        if (!result) return node;
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            executionStatus: result.status,
+            executionError: result.error,
+            executionOutput: result.text,
+            actualTokens: {
+              input: result.prompt_tokens,
+              output: result.completion_tokens,
+              total: result.total_tokens
+            }
+          }
+        };
+      });
+
+      set({ nodes: executedNodes, isExecuting: false });
+      return data;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'DAG execution failed';
+      console.error('[Store] DAG execution error:', err);
+      set({
+        isExecuting: false,
+        executionError: message,
+        nodes: get().nodes.map((node) => ({
+          ...node,
+          data: { ...node.data, executionStatus: 'failed', executionError: message }
+        }))
+      });
+      return null;
+    }
+  },
 
   onNodesChange: (changes) => {
     set({

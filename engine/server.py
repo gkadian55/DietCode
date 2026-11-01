@@ -16,9 +16,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 try:
+    from executor import DAGExecutor
     from models.planner import DAGPlanner
     from models.token_forecaster import MODEL_PROFILES, TokenForecaster
 except ImportError:
+    from engine.executor import DAGExecutor
     from engine.models.planner import DAGPlanner
     from engine.models.token_forecaster import MODEL_PROFILES, TokenForecaster
 
@@ -54,6 +56,13 @@ class PredictNodeRequest(BaseModel):
 class ReplanRequest(BaseModel):
     nodes: list[dict[str, Any]]
     edges: list[dict[str, Any]]
+
+
+class ExecuteRequest(BaseModel):
+    graph: dict[str, dict[str, Any]]
+    max_concurrency: int = 8
+    request_timeout: float = 120.0
+    max_retries: int = 2
 
 
 @app.get("/api/health")
@@ -99,6 +108,26 @@ def replan_graph(req: ReplanRequest):
         }
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.post("/api/execute")
+async def execute_graph(req: ExecuteRequest):
+    """Execute the frontend DAG and return generated text plus token telemetry."""
+    try:
+        executor = DAGExecutor(
+            max_concurrency=req.max_concurrency,
+            request_timeout=req.request_timeout,
+            max_retries=req.max_retries,
+        )
+        results = await executor.execute(req.graph)
+        return {
+            "status": "completed",
+            "results": results,
+        }
+    except (TypeError, ValueError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail="DAG execution failed") from err
 
 
 if __name__ == "__main__":
