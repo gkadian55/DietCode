@@ -48,6 +48,7 @@ DietCode/
 │   └── index.css              # Custom glassmorphic design system
 └── engine/                    # Local Python ML Engine
     ├── server.py              # FastAPI server (port 8765)
+    ├── executor.py            # Async DAG execution and LiteLLM telemetry
     ├── models/
     │   ├── token_forecaster.py# Self-trained token & cost regressor
     │   └── planner.py         # Topological DAG decomposition & aggregates
