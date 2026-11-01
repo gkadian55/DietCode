@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useDagStore } from '../../store/useDagStore';
 import { 
   GitFork, 
@@ -7,9 +7,15 @@ import {
   Minimize2, 
   Square, 
   X, 
-  Radio, 
-  Activity 
+  Loader2 
 } from 'lucide-react';
+
+const PRESET_GOALS = [
+  { label: '⚡ Hello World', value: "Create a webpage with 'Hello World' only" },
+  { label: '🌦️ Weather App', value: 'Build a real-time weather forecasting dashboard' },
+  { label: '💬 Realtime Chat', value: 'Build a real-time chat application with WebSocket' },
+  { label: '🏦 FinTech System', value: 'Distributed high-frequency fintech payment microservice with Kafka' }
+];
 
 export const Header = () => {
   const { 
@@ -22,11 +28,23 @@ export const Header = () => {
 
   const [inputVal, setInputVal] = useState(goalInput);
 
+  // Synchronize local input state whenever goalInput updates
+  useEffect(() => {
+    setInputVal(goalInput);
+  }, [goalInput]);
+
   const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!inputVal.trim()) return;
-    setGoalInput(inputVal);
-    decomposeGoal(inputVal);
+    e?.preventDefault();
+    const target = inputVal.trim();
+    if (!target) return;
+    setGoalInput(target);
+    decomposeGoal(target);
+  };
+
+  const handleSelectPreset = (presetVal) => {
+    setInputVal(presetVal);
+    setGoalInput(presetVal);
+    decomposeGoal(presetVal);
   };
 
   const handleMinimize = () => {
@@ -43,7 +61,7 @@ export const Header = () => {
 
   return (
     <header className="header-bar">
-      {/* Left: Brand Identity */}
+      {/* Left: Brand Identity & Backend Status */}
       <div className="header-left">
         <div className="logo-badge">
           <div className="logo-icon">
@@ -52,16 +70,15 @@ export const Header = () => {
           <span>DietCode</span>
         </div>
 
-        {/* Backend Status Indicator */}
-        <div className="status-pill">
+        <div className="status-pill" title={backendStatus === 'online' ? 'Python ML backend is connected' : 'Running in client fallback mode'}>
           <div className={`status-dot ${backendStatus === 'online' ? 'online' : ''}`} />
           <span style={{ color: backendStatus === 'online' ? '#10b981' : '#94a3b8' }}>
-            {backendStatus === 'online' ? 'Local ML Engine Online' : 'Engine Connecting...'}
+            {backendStatus === 'online' ? 'Local ML Engine Online' : 'Engine Connecting / Fallback Mode'}
           </span>
         </div>
       </div>
 
-      {/* Center: Interactive Project Goal Input */}
+      {/* Center: Interactive Project Goal Input & Presets */}
       <div className="header-center">
         <form onSubmit={handleSubmit} className="goal-input-box">
           <Search size={14} color="#64748b" />
@@ -77,10 +94,35 @@ export const Header = () => {
             className="btn btn-primary btn-sm"
             disabled={isLoading || !inputVal.trim()}
           >
-            <Sparkles size={12} />
-            {isLoading ? 'Decomposing...' : 'Generate DAG'}
+            {isLoading ? (
+              <>
+                <Loader2 size={12} className="spin-animation" />
+                <span>Decomposing...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles size={12} />
+                <span>Generate DAG</span>
+              </>
+            )}
           </button>
         </form>
+
+        {/* Quick Demo Preset Chips */}
+        <div className="preset-chips-container">
+          {PRESET_GOALS.map((preset) => (
+            <button
+              key={preset.label}
+              type="button"
+              className="preset-chip-btn"
+              onClick={() => handleSelectPreset(preset.value)}
+              disabled={isLoading}
+              title={`Switch query to: ${preset.value}`}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Right: Window Controls */}

@@ -3,6 +3,183 @@ import { applyNodeChanges, applyEdgeChanges, addEdge } from '@xyflow/react';
 
 const API_BASE = 'http://127.0.0.1:8765';
 
+export const generateLocalFallbackDag = (goal) => {
+  const cleanGoal = (goal || '').trim();
+  const lowerGoal = cleanGoal.toLowerCase();
+  const words = new Set(lowerGoal.match(/\b\w+\b/g) || []);
+  const wordCount = words.size;
+
+  const slug = lowerGoal.replace(/[^a-z0-9]+/g, '_').slice(0, 10) || 'task';
+  const cleanSubject = cleanGoal
+    .replace(/^(?:build|create|develop|make|implement|design|write|generate|set up)\s+(?:a|an|the)?\s*/i, '')
+    .replace(/\s+(?:with|using|in)\s+.*$/i, '')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 4)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ') || 'Application';
+
+  let rawTasks = [];
+  const isMicro = lowerGoal.includes('hello world') || 
+                  lowerGoal.includes('only create') || 
+                  lowerGoal.includes('just create') || 
+                  lowerGoal.includes('single file') ||
+                  lowerGoal.includes('image of');
+
+  if (isMicro) {
+    rawTasks = [
+      {
+        id: `${slug}_1_page`,
+        title: `1. Create ${cleanSubject} Webpage`,
+        description: `Build a clean single HTML page displaying '${cleanGoal}' with centered responsive styling.`,
+        category: 'Frontend',
+        dependencies: [],
+        agent: { id: 'gemini-2-0-flash', name: 'Gemini 2.0 Flash', color: '#6366f1' },
+        tokens: { input: 320, output: 450, total: 770 },
+        complexity: 25
+      }
+    ];
+  } else if (wordCount <= 6 && !['system', 'architecture', 'distributed', 'microservice', 'platform', 'database', 'dashboard'].some(w => words.has(w))) {
+    rawTasks = [
+      {
+        id: `${slug}_1_logic`,
+        title: `1. ${cleanSubject} Core Logic & Handlers`,
+        description: `Implement core logic, state management, and request handling for ${cleanGoal}.`,
+        category: 'Backend',
+        dependencies: [],
+        agent: { id: 'gpt-4o', name: 'ChatGPT (GPT-4o)', color: '#10b981' },
+        tokens: { input: 850, output: 1200, total: 2050 },
+        complexity: 40
+      },
+      {
+        id: `${slug}_2_ui`,
+        title: `2. ${cleanSubject} Interactive View & Events`,
+        description: `Create responsive layout, connect click/change event handlers, and render output.`,
+        category: 'Frontend',
+        dependencies: [`${slug}_1_logic`],
+        agent: { id: 'gemini-2-0-flash', name: 'Gemini 2.0 Flash', color: '#6366f1' },
+        tokens: { input: 600, output: 950, total: 1550 },
+        complexity: 35
+      }
+    ];
+  } else {
+    rawTasks = [
+      {
+        id: `${slug}_1_arch`,
+        title: `1. ${cleanSubject} Architecture & Data Models`,
+        description: `Define project structure, schemas, and contract interfaces for ${cleanGoal}.`,
+        category: 'Architecture',
+        dependencies: [],
+        agent: { id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet', color: '#f97316' },
+        tokens: { input: 1200, output: 1400, total: 2600 },
+        complexity: 65
+      },
+      {
+        id: `${slug}_2_backend`,
+        title: `2. ${cleanSubject} Core Backend & API Routes`,
+        description: `Implement server routes, data processing logic, and business handlers for ${cleanGoal}.`,
+        category: 'Backend',
+        dependencies: [`${slug}_1_arch`],
+        agent: { id: 'gpt-4o', name: 'ChatGPT (GPT-4o)', color: '#10b981' },
+        tokens: { input: 2100, output: 2800, total: 4900 },
+        complexity: 75
+      },
+      {
+        id: `${slug}_3_frontend`,
+        title: `3. ${cleanSubject} Frontend UI & Reactive State`,
+        description: `Create user interface views, input forms, and client state sync for ${cleanGoal}.`,
+        category: 'Frontend',
+        dependencies: [`${slug}_2_backend`],
+        agent: { id: 'gemini-2-0-flash', name: 'Gemini 2.0 Flash', color: '#6366f1' },
+        tokens: { input: 1800, output: 2400, total: 4200 },
+        complexity: 50
+      },
+      {
+        id: `${slug}_4_qa`,
+        title: `4. ${cleanSubject} Integration Testing & Polish`,
+        description: `Verify end-to-end user workflows, test edge cases, and ensure clean error handling for ${cleanGoal}.`,
+        category: 'QA & Testing',
+        dependencies: [`${slug}_3_frontend`],
+        agent: { id: 'claude-3-5-haiku', name: 'Claude 3.5 Haiku', color: '#fb923c' },
+        tokens: { input: 1500, output: 1800, total: 3300 },
+        complexity: 45
+      }
+    ];
+  }
+
+  const edges = [];
+  const nodes = rawTasks.map((t, idx) => {
+    t.dependencies.forEach(depId => {
+      edges.push({
+        id: `e_${depId}_${t.id}`,
+        source: depId,
+        target: t.id,
+        animated: true,
+        style: { stroke: '#6366f1', strokeWidth: 2 }
+      });
+    });
+
+    return {
+      id: t.id,
+      type: 'agentNode',
+      position: { x: 80 + idx * 360, y: 120 },
+      data: {
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        category: t.category,
+        status: 'pending',
+        dependencies: t.dependencies,
+        predictedTokens: t.tokens,
+        complexityScore: t.complexity,
+        recommendedAgent: {
+          id: t.agent.id,
+          name: t.agent.name,
+          color: t.agent.color,
+          estimatedCost: ((t.tokens.input * 1.5 + t.tokens.output * 5.0) / 1000000),
+          estimatedLatency: 8.5
+        },
+        assignedAgent: t.agent.id,
+        modelEvaluations: {
+          [t.agent.id]: {
+            id: t.agent.id,
+            name: t.agent.name,
+            color: t.agent.color,
+            totalCost: ((t.tokens.input * 1.5 + t.tokens.output * 5.0) / 1000000),
+            latencySec: 8.5,
+            reasoningScore: 90
+          }
+        }
+      }
+    };
+  });
+
+  const totalIn = nodes.reduce((s, n) => s + n.data.predictedTokens.input, 0);
+  const totalOut = nodes.reduce((s, n) => s + n.data.predictedTokens.output, 0);
+
+  return {
+    nodes,
+    edges,
+    aggregates: {
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+      totalInputTokens: totalIn,
+      totalOutputTokens: totalOut,
+      totalTokens: totalIn + totalOut,
+      criticalPath: nodes.map(n => n.id),
+      criticalPathLatencySec: Math.round(nodes.length * 8.2),
+      agentDistribution: { [nodes[0].data.assignedAgent]: nodes.length },
+      comparison: {
+        allGpt4oCost: 0.045,
+        allClaudeCost: 0.075,
+        allGeminiCost: 0.003,
+        dietCodeOptimizedCost: 0.012,
+        savingsPercentVsBaseline: 68
+      }
+    }
+  };
+};
+
 // Convert React Flow's node/edge representation to the execution engine's
 // dependency map. Edges are authoritative because users can edit them directly.
 export const buildExecutionGraph = (nodes, edges) => {
@@ -299,16 +476,29 @@ export const useDagStore = create((set, get) => ({
       const data = await res.json();
 
       set({
+        goalInput: targetGoal,
         nodes: data.nodes,
         edges: data.edges,
         aggregates: data.aggregates,
         selectedNode: data.nodes.length > 0 ? data.nodes[0] : null,
+        executionError: null,
         isLoading: false,
         backendStatus: 'online'
       });
     } catch (err) {
-      console.error('[Store] Failed to decompose goal:', err);
-      set({ isLoading: false });
+      console.warn('[Store] Remote decomposition offline, using local client fallback:', err);
+      // Fallback local decomposition so the UI ALWAYS generates the new graph immediately
+      const fallbackData = generateLocalFallbackDag(targetGoal);
+      set({
+        goalInput: targetGoal,
+        nodes: fallbackData.nodes,
+        edges: fallbackData.edges,
+        aggregates: fallbackData.aggregates,
+        selectedNode: fallbackData.nodes.length > 0 ? fallbackData.nodes[0] : null,
+        executionError: null,
+        isLoading: false,
+        backendStatus: 'offline'
+      });
     }
   },
 
