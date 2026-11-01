@@ -57,7 +57,7 @@ export const useDagStore = create((set, get) => ({
     }
   },
   selectedNode: null,
-  goalInput: 'Distributed Multi-Agent Architecture for Real-Time Tokenomics and Fault-Tolerant Observability',
+  goalInput: 'Multi-Agent Coding Assistant with Smart LLM Routing and Token Analytics',
   isLoading: false,
   isExecuting: false,
   executionError: null,
@@ -88,13 +88,17 @@ export const useDagStore = create((set, get) => ({
       return null;
     }
 
+    const queuedNodes = nodes.map((node) => ({
+      ...node,
+      data: { ...node.data, executionStatus: 'running', executionError: null }
+    }));
+    const curSelectedId = get().selectedNode?.id;
+
     set({
       isExecuting: true,
       executionError: null,
-      nodes: nodes.map((node) => ({
-        ...node,
-        data: { ...node.data, executionStatus: 'queued', executionError: null }
-      }))
+      nodes: queuedNodes,
+      selectedNode: curSelectedId ? queuedNodes.find(n => n.id === curSelectedId) || get().selectedNode : get().selectedNode
     });
 
     try {
@@ -120,6 +124,7 @@ export const useDagStore = create((set, get) => ({
             executionStatus: result.status,
             executionError: result.error,
             executionOutput: result.text,
+            executionModel: result.routed_model || result.model,
             actualTokens: {
               input: result.prompt_tokens,
               output: result.completion_tokens,
@@ -129,20 +134,114 @@ export const useDagStore = create((set, get) => ({
         };
       });
 
-      set({ nodes: executedNodes, isExecuting: false });
+      const currentSelectedId = get().selectedNode?.id;
+      const updatedSelectedNode = currentSelectedId ? executedNodes.find(n => n.id === currentSelectedId) : null;
+
+      const totalActIn = executedNodes.reduce((sum, n) => sum + (n.data.actualTokens?.input || 0), 0);
+      const totalActOut = executedNodes.reduce((sum, n) => sum + (n.data.actualTokens?.output || 0), 0);
+
+      set({
+        nodes: executedNodes,
+        selectedNode: updatedSelectedNode || get().selectedNode,
+        isExecuting: false,
+        aggregates: {
+          ...get().aggregates,
+          actualTokens: {
+            input: totalActIn,
+            output: totalActOut,
+            total: totalActIn + totalActOut
+          }
+        }
+      });
       return data;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'DAG execution failed';
       console.error('[Store] DAG execution error:', err);
+      const failedNodes = get().nodes.map((node) => ({
+        ...node,
+        data: { ...node.data, executionStatus: 'failed', executionError: message }
+      }));
+      const currentSelectedId = get().selectedNode?.id;
       set({
         isExecuting: false,
         executionError: message,
-        nodes: get().nodes.map((node) => ({
-          ...node,
-          data: { ...node.data, executionStatus: 'failed', executionError: message }
-        }))
+        nodes: failedNodes,
+        selectedNode: currentSelectedId ? failedNodes.find(n => n.id === currentSelectedId) || get().selectedNode : get().selectedNode
       });
       return null;
+    }
+  },
+
+  executeNode: async (nodeId) => {
+    const { nodes } = get();
+    const targetNode = nodes.find(n => n.id === nodeId);
+    if (!targetNode) return;
+
+    const data = targetNode.data || {};
+    const model = data.assignedAgent || data.recommendedAgent?.id || 'gemini-2-0-flash';
+    const title = data.title || 'Untitled task';
+    const description = data.description || '';
+
+    const singleGraph = {
+      [nodeId]: {
+        prompt: description ? `${title}\n\n${description}` : title,
+        model,
+        depends_on: []
+      }
+    };
+
+    const runningNodes = get().nodes.map(n => n.id === nodeId ? {
+      ...n,
+      data: { ...n.data, executionStatus: 'running', executionError: null }
+    } : n);
+
+    set({
+      nodes: runningNodes,
+      selectedNode: runningNodes.find(n => n.id === nodeId)
+    });
+
+    try {
+      const res = await fetch(`${API_BASE}/api/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ graph: singleGraph })
+      });
+      const resData = await res.json();
+      if (!res.ok) {
+        throw new Error(resData.detail || `Execution failed with HTTP ${res.status}`);
+      }
+      const result = resData.results?.[nodeId];
+      if (result) {
+        const completedNodes = get().nodes.map(n => n.id === nodeId ? {
+          ...n,
+          data: {
+            ...n.data,
+            executionStatus: result.status,
+            executionError: result.error,
+            executionOutput: result.text,
+            executionModel: result.routed_model || result.model,
+            actualTokens: {
+              input: result.prompt_tokens,
+              output: result.completion_tokens,
+              total: result.total_tokens
+            }
+          }
+        } : n);
+        set({
+          nodes: completedNodes,
+          selectedNode: completedNodes.find(n => n.id === nodeId)
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Task execution failed';
+      const failedNodes = get().nodes.map(n => n.id === nodeId ? {
+        ...n,
+        data: { ...n.data, executionStatus: 'failed', executionError: msg }
+      } : n);
+      set({
+        nodes: failedNodes,
+        selectedNode: failedNodes.find(n => n.id === nodeId)
+      });
     }
   },
 

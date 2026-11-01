@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 import networkx as nx
@@ -79,7 +80,8 @@ class DAGPlanner:
                 title=t["title"],
                 description=t["description"],
                 upstream_count=upstream_count,
-                depth=depth
+                depth=depth,
+                category=t.get("category", "")
             )
 
             processed_nodes.append({
@@ -111,171 +113,307 @@ class DAGPlanner:
         }
 
     def _generate_subtasks(self, goal: str) -> list[dict[str, Any]]:
-        """Decomposes goals into specialized subtasks with clear domain boundaries."""
+        """Decomposes goals adaptively into 1, 2, 4, or N steps based on true task complexity."""
         clean_goal = goal.strip()
         lower_goal = clean_goal.lower()
+        words = set(re.findall(r"\b\w+\b", lower_goal))
+        word_count = len(clean_goal.split())
 
-        # Dynamic architectural module detection
-        has_db = any(w in lower_goal for w in ["db", "database", "sql", "postgres", "mongo", "prisma", "storage", "schema"])
-        has_auth = any(w in lower_goal for w in ["auth", "security", "jwt", "oauth", "rbac", "user", "session", "login"])
-        has_cache = any(w in lower_goal for w in ["cache", "redis", "memcached", "in-memory"])
-        has_queue = any(w in lower_goal for w in ["kafka", "queue", "stream", "pub-sub", "pubsub", "event", "worker", "rabbitmq", "celery", "distributed"])
-        has_ml = any(w in lower_goal for w in ["ai", "model", "llm", "agent", "train", "forecast", "embed", "rag", "onnx", "quantiz"])
-        has_api = any(w in lower_goal for w in ["api", "rest", "graphql", "grpc", "gateway", "endpoint", "microservice"])
-        has_ui = any(w in lower_goal for w in ["ui", "frontend", "dashboard", "canvas", "web", "react", "client", "visual", "view"])
-        has_devops = any(w in lower_goal for w in ["docker", "k8s", "kubernetes", "deploy", "ci", "cd", "cluster", "cloud", "infra"])
-        has_obs = any(w in lower_goal for w in ["observability", "metrics", "telemetry", "tracing", "monitoring", "log", "latency"])
+        def match_intent(keywords: list[str]) -> bool:
+            return any(kw in words or (len(kw) > 3 and kw in lower_goal) for kw in keywords)
 
-        # 1. Root Architecture Node
-        tasks: list[dict[str, Any]] = [
-            {
-                "id": "node-arch",
-                "title": "System Architecture & Protocol Spec",
-                "description": f"Formalize requirements, domain boundary specifications, and communication contracts for '{clean_goal}'.",
-                "category": "Architecture",
-                "dependencies": []
-            }
-        ]
+        # -------------------------------------------------------------------------
+        # TIER 1: Trivial / Micro Tasks (Exactly 1 Focused Step)
+        # e.g., "create a webpage with 'Hello World' only", "generate an image of a cat"
+        # -------------------------------------------------------------------------
+        is_micro_task = False
+        if ("hello world" in lower_goal or "only" in words or "just" in words or "single" in words) and word_count <= 10:
+            is_micro_task = True
+        elif any(k in lower_goal for k in ["create an image", "generate an image", "make an image", "single page", "simple script", "regex for", "regex to", "function to", "write a function"]):
+            is_micro_task = True
+        elif word_count <= 4 and not any(w in words for w in ["app", "system", "fullstack", "platform", "service"]):
+            is_micro_task = True
 
-        # 2. Database Schema (if requested or complex)
-        if has_db or not (has_ml or has_queue):
+        if is_micro_task:
+            if "image" in lower_goal:
+                return [{
+                    "id": "step-1-generate",
+                    "title": "1. Generate Image Asset",
+                    "description": f"Synthesize visual image asset according to prompt requirements: '{clean_goal}'.",
+                    "category": "Asset Generation",
+                    "dependencies": []
+                }]
+            elif "regex" in lower_goal:
+                return [{
+                    "id": "step-1-regex",
+                    "title": "1. Implement & Validate Regex",
+                    "description": f"Write regular expression pattern and verify against target test inputs: '{clean_goal}'.",
+                    "category": "Utility",
+                    "dependencies": []
+                }]
+            elif "hello world" in lower_goal or "webpage" in lower_goal or "html" in lower_goal:
+                return [{
+                    "id": "step-1-page",
+                    "title": "1. Create 'Hello World' Webpage",
+                    "description": "Build a clean single HTML page displaying 'Hello World' with centered responsive styling.",
+                    "category": "Frontend",
+                    "dependencies": []
+                }]
+            else:
+                return [{
+                    "id": "step-1-task",
+                    "title": f"1. Execute: {clean_goal[:45]}",
+                    "description": f"Directly implement the requested single-step task: '{clean_goal}'.",
+                    "category": "Implementation",
+                    "dependencies": []
+                }]
+
+        # -------------------------------------------------------------------------
+        # TIER 2: Small / 2-Step Tasks (Exactly 2 Steps)
+        # e.g., "simple counter button in react", "weather script fetching from api"
+        # -------------------------------------------------------------------------
+        is_small_task = (
+            word_count <= 8 
+            and not any(w in words for w in ["fullstack", "enterprise", "system", "architecture", "distributed", "platform", "microservice", "multi"])
+        )
+        if is_small_task:
+            if match_intent(["react", "button", "counter", "form", "toggle", "component", "modal", "ui", "widget"]):
+                return [
+                    {
+                        "id": "step-1-component",
+                        "title": "1. Build Component Layout & State",
+                        "description": f"Create the component structure, define local state, and apply styles for {clean_goal}.",
+                        "category": "Frontend",
+                        "dependencies": []
+                    },
+                    {
+                        "id": "step-2-interaction",
+                        "title": "2. Event Handling & Behavior",
+                        "description": "Wire up user click events, state transitions, and validation feedback.",
+                        "category": "Frontend",
+                        "dependencies": ["step-1-component"]
+                    }
+                ]
+            elif match_intent(["script", "fetch", "api", "scrape", "cli", "utility"]):
+                return [
+                    {
+                        "id": "step-1-fetch",
+                        "title": "1. Core Logic & API Request",
+                        "description": f"Implement request handling, data fetching, and response parsing for {clean_goal}.",
+                        "category": "Backend",
+                        "dependencies": []
+                    },
+                    {
+                        "id": "step-2-output",
+                        "title": "2. Formatting & Error Handling",
+                        "description": "Format output presentation, add input validation, and handle error scenarios gracefully.",
+                        "category": "QA & Testing",
+                        "dependencies": ["step-1-fetch"]
+                    }
+                ]
+
+        # -------------------------------------------------------------------------
+        # TIER 4: Enterprise Complex Multi-Service Architecture (5 to 7 Steps)
+        # Triggered when multiple distributed/enterprise subsystems are explicitly specified
+        # -------------------------------------------------------------------------
+        complex_signals = ["distributed", "microservice", "microservices", "kafka", "queue", "redis", "cache", "kubernetes", "k8s", "docker", "telemetry", "observability", "auth", "jwt", "database", "postgres", "sql"]
+        signal_count = sum(1 for s in complex_signals if s in words or s in lower_goal)
+        is_enterprise_complex = signal_count >= 3 or ("distributed" in words and any(w in words for w in ["multi", "system", "architecture"]))
+
+        if is_enterprise_complex:
+            tasks: list[dict[str, Any]] = [
+                {
+                    "id": "step-1-arch",
+                    "title": "1. Enterprise Architecture & Protocol Spec",
+                    "description": f"Define system topology, service boundary contracts, and communication protocols for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": []
+                },
+                {
+                    "id": "step-2-data",
+                    "title": "2. Distributed Data Models & Migrations",
+                    "description": "Formulate persistent data schemas, relational indexes, and automated transactional migrations.",
+                    "category": "Architecture",
+                    "dependencies": ["step-1-arch"]
+                }
+            ]
+
+            has_auth = match_intent(["auth", "security", "jwt", "oauth", "rbac", "user", "session", "login"])
+            has_queue = match_intent(["kafka", "queue", "stream", "pubsub", "event", "rabbitmq", "celery", "distributed"])
+            has_ui = match_intent(["ui", "frontend", "dashboard", "react", "canvas", "web", "view"])
+
+            prev_id = "step-2-data"
+            if has_auth:
+                tasks.append({
+                    "id": "step-3-auth",
+                    "title": "3. Authentication & RBAC Security",
+                    "description": "Implement token signing, session rotation, security middleware, and role-based permissions.",
+                    "category": "Architecture",
+                    "dependencies": ["step-2-data"]
+                })
+                prev_id = "step-3-auth"
+
+            if has_queue:
+                tasks.append({
+                    "id": "step-4-queue",
+                    "title": f"{len(tasks) + 1}. Distributed Message Bus & Workers",
+                    "description": "Deploy partitioned event streams, backpressure management, and asynchronous background workers.",
+                    "category": "Backend",
+                    "dependencies": [prev_id]
+                })
+                prev_id = "step-4-queue"
+
             tasks.append({
-                "id": "node-db",
-                "title": "Data Schema, Migrations & Indexing",
-                "description": "Formulate persistent models, transactional constraints, relational indexes, and migration scripts.",
-                "category": "Database",
-                "dependencies": ["node-arch"]
+                "id": f"step-{len(tasks) + 1}-core",
+                "title": f"{len(tasks) + 1}. Core Service Engine & APIs",
+                "description": "Implement high-throughput business logic services, RPC/REST interfaces, and state evaluators.",
+                "category": "Backend",
+                "dependencies": [prev_id]
             })
 
-        # 3. Auth & Access Control
-        if has_auth:
-            db_dep = ["node-db"] if any(t["id"] == "node-db" for t in tasks) else ["node-arch"]
+            if has_ui:
+                tasks.append({
+                    "id": f"step-{len(tasks) + 1}-ui",
+                    "title": f"{len(tasks) + 1}. Real-Time Management Dashboard",
+                    "description": "Build responsive visual interface, telemetry widgets, and live WebSocket state synchronization.",
+                    "category": "Frontend",
+                    "dependencies": [tasks[-1]["id"]]
+                })
+
             tasks.append({
-                "id": "node-auth",
-                "title": "Auth, JWT & Role-Based Access Control",
-                "description": "Implement cryptographic token signing, session rotation, RBAC middleware, and credential verification.",
-                "category": "Security",
-                "dependencies": db_dep
+                "id": f"step-{len(tasks) + 1}-qa",
+                "title": f"{len(tasks) + 1}. End-to-End Stress & Resilience Testing",
+                "description": "Run contract tests, load benchmarks, failure resilience checks, and end-to-end integration flows.",
+                "category": "QA & Testing",
+                "dependencies": [tasks[-1]["id"]]
             })
+            return tasks
 
-        # 4. In-Memory Caching
-        if has_cache:
-            db_dep = ["node-db"] if any(t["id"] == "node-db" for t in tasks) else ["node-arch"]
-            tasks.append({
-                "id": "node-cache",
-                "title": "High-Throughput In-Memory Caching",
-                "description": "Deploy cache eviction policies (LRU/TTL), connection pooling, and serialized key-value caching.",
-                "category": "Performance",
-                "dependencies": db_dep
-            })
+        # -------------------------------------------------------------------------
+        # TIER 3: Standard Application Tasks (3 to 4 Clear Steps)
+        # -------------------------------------------------------------------------
+        is_ai_agent = match_intent(["agent", "llm", "ai", "model", "token", "prompt", "rag", "chat", "gpt", "gemini", "claude", "forecaster"])
+        is_frontend = match_intent(["ui", "frontend", "dashboard", "react", "canvas", "web", "view", "interface", "client"])
+        is_backend_only = match_intent(["api", "backend", "microservice", "service", "rest", "graphql", "server", "endpoint"]) and not is_frontend
+        is_cli_or_script = match_intent(["cli", "script", "tool", "scraper", "scrape", "automation", "parser", "pipeline"]) and not (is_frontend or is_ai_agent)
 
-        # 5. Distributed Queues & Event Streaming
-        if has_queue:
-            tasks.append({
-                "id": "node-queue",
-                "title": "Distributed Event Bus & Worker Pipeline",
-                "description": "Establish partitioned event pub-sub streaming, backpressure handling, and asynchronous workers.",
-                "category": "Distributed Systems",
-                "dependencies": ["node-arch"]
-            })
-
-        # 6. Core Processing Engine
-        core_deps = ["node-arch"]
-        if any(t["id"] == "node-db" for t in tasks):
-            core_deps.append("node-db")
-        if any(t["id"] == "node-queue" for t in tasks):
-            core_deps.append("node-queue")
-
-        tasks.append({
-            "id": "node-core",
-            "title": "Core Algorithmic Engine & Business Logic",
-            "description": "Construct low-latency stateful execution services, domain rule evaluators, and atomic workflows.",
-            "category": "Backend",
-            "dependencies": core_deps
-        })
-
-        # 7. Machine Learning & Embeddings
-        if has_ml:
-            ml_dep = ["node-core"]
-            if any(t["id"] == "node-db" for t in tasks):
-                ml_dep.append("node-db")
-            tasks.append({
-                "id": "node-ml",
-                "title": "Local ML Pipeline & Token Forecaster",
-                "description": "Feature vectorization, local GGUF/ONNX model inference, quantization, and tensor caching.",
-                "category": "Machine Learning",
-                "dependencies": ml_dep
-            })
-
-        # 8. API Gateway & RPC
-        if has_api or has_ui:
-            api_deps = ["node-core"]
-            if any(t["id"] == "node-auth" for t in tasks):
-                api_deps.append("node-auth")
-            tasks.append({
-                "id": "node-api",
-                "title": "API Gateway & High-Speed Interfaces",
-                "description": "Expose typed REST/gRPC endpoints, schema validation, rate-limiting, and error handlers.",
-                "category": "API Layer",
-                "dependencies": api_deps
-            })
-
-        # 9. Client UI & Canvas
-        if has_ui or len(tasks) < 5:
-            ui_dep = ["node-api"] if any(t["id"] == "node-api" for t in tasks) else ["node-core"]
-            tasks.append({
-                "id": "node-ui",
-                "title": "Client UI & Reactive State Dashboard",
-                "description": "Render interactive canvas views, live telemetry charts, micro-animations, and client state sync.",
-                "category": "Frontend",
-                "dependencies": ui_dep
-            })
-
-        # 10. Containerization & DevOps
-        if has_devops:
-            devops_dep = ["node-core"]
-            if any(t["id"] == "node-ui" for t in tasks):
-                devops_dep.append("node-ui")
-            tasks.append({
-                "id": "node-devops",
-                "title": "Containerization & Infrastructure as Code",
-                "description": "Multi-stage Docker builds, Kubernetes manifests, health probes, and automated CI/CD stages.",
-                "category": "DevOps",
-                "dependencies": devops_dep
-            })
-
-        # 11. Observability & Tracing
-        if has_obs or len(tasks) >= 6:
-            obs_deps = ["node-core"]
-            if any(t["id"] == "node-api" for t in tasks):
-                obs_deps.append("node-api")
-            tasks.append({
-                "id": "node-obs",
-                "title": "Telemetry & Distributed Tracing",
-                "description": "Integrate OpenTelemetry metrics, Prometheus scrapers, structured logging, and latency tracing.",
-                "category": "Observability",
-                "dependencies": obs_deps
-            })
-
-        # 12. Automated Testing Suite (Terminal node)
-        qa_deps = []
-        if any(t["id"] == "node-ui" for t in tasks):
-            qa_deps.append("node-ui")
-        elif any(t["id"] == "node-api" for t in tasks):
-            qa_deps.append("node-api")
+        if is_ai_agent:
+            return [
+                {
+                    "id": "step-1-spec",
+                    "title": "1. System Design & Agent Roles",
+                    "description": f"Define agent responsibilities, task routing rules, and data schemas for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": []
+                },
+                {
+                    "id": "step-2-engine",
+                    "title": "2. Agent Execution & Model Router",
+                    "description": "Implement core agent orchestration logic, model routing, and token budget management.",
+                    "category": "Backend",
+                    "dependencies": ["step-1-spec"]
+                },
+                {
+                    "id": "step-3-ui",
+                    "title": "3. Interactive Canvas & Dashboard",
+                    "description": "Build user controls to visualize the agent DAG, edit prompts, and inspect live token metrics.",
+                    "category": "Frontend",
+                    "dependencies": ["step-2-engine"]
+                },
+                {
+                    "id": "step-4-qa",
+                    "title": "4. Verification & Model Benchmarks",
+                    "description": "Test multi-agent workflows, benchmark token costs, and verify error recovery handling.",
+                    "category": "QA & Testing",
+                    "dependencies": ["step-3-ui"]
+                }
+            ]
+        elif is_cli_or_script:
+            return [
+                {
+                    "id": "step-1-cli-spec",
+                    "title": "1. CLI Commands & Config",
+                    "description": f"Define command-line options, flag arguments, and configuration loading for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": []
+                },
+                {
+                    "id": "step-2-processing",
+                    "title": "2. Core Automation Logic",
+                    "description": "Build data transformation, file handling, and core operational logic with progress feedback.",
+                    "category": "Backend",
+                    "dependencies": ["step-1-cli-spec"]
+                },
+                {
+                    "id": "step-3-testing",
+                    "title": "3. CLI Validation & Packaging",
+                    "description": "Write integration test cases, verify exit codes, and package the utility for distribution.",
+                    "category": "QA & Testing",
+                    "dependencies": ["step-2-processing"]
+                }
+            ]
+        elif is_backend_only:
+            return [
+                {
+                    "id": "step-1-schema",
+                    "title": "1. API Contract & Database Schema",
+                    "description": f"Design endpoint specifications, request/response models, and database table schemas for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": []
+                },
+                {
+                    "id": "step-2-services",
+                    "title": "2. Service Handlers & Business Logic",
+                    "description": "Implement database CRUD operations, business logic controllers, and service handlers.",
+                    "category": "Backend",
+                    "dependencies": ["step-1-schema"]
+                },
+                {
+                    "id": "step-3-security",
+                    "title": "3. Authentication & Middleware",
+                    "description": "Add user authentication, input validation middleware, rate-limiting, and error handling.",
+                    "category": "Architecture",
+                    "dependencies": ["step-2-services"]
+                },
+                {
+                    "id": "step-4-testing",
+                    "title": "4. API Test Suite & Validation",
+                    "description": "Write automated unit tests for all endpoints and verify database transactional integrity.",
+                    "category": "QA & Testing",
+                    "dependencies": ["step-3-security"]
+                }
+            ]
         else:
-            qa_deps.append("node-core")
-
-        if any(t["id"] == "node-obs" for t in tasks):
-            qa_deps.append("node-obs")
-
-        tasks.append({
-            "id": "node-qa",
-            "title": "Automated End-to-End & Stress Testing",
-            "description": "Execute contract tests, chaos resilience injection, integration mocks, and load benchmarks.",
-            "category": "QA & Testing",
-            "dependencies": qa_deps
-        })
+            return [
+                {
+                    "id": "step-1-architecture",
+                    "title": "1. Architecture & Data Models",
+                    "description": f"Define project structure, data entities, and component specifications for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": []
+                },
+                {
+                    "id": "step-2-backend",
+                    "title": "2. Core Backend & API Endpoints",
+                    "description": "Implement server routes, data processing functions, and business logic handlers.",
+                    "category": "Backend",
+                    "dependencies": ["step-1-architecture"]
+                },
+                {
+                    "id": "step-3-frontend",
+                    "title": "3. Frontend UI & State Management",
+                    "description": "Create user interface views, input forms, and connect them to backend API endpoints.",
+                    "category": "Frontend",
+                    "dependencies": ["step-2-backend"]
+                },
+                {
+                    "id": "step-4-testing",
+                    "title": "4. Integration Testing & Polish",
+                    "description": "Verify end-to-end user workflows, test edge cases, and ensure clean error handling.",
+                    "category": "QA & Testing",
+                    "dependencies": ["step-3-frontend"]
+                }
+            ]
 
         return tasks
 
