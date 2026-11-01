@@ -1,9 +1,19 @@
 import React from 'react';
 import { useDagStore } from '../../store/useDagStore';
-import { Layers, Clock, TrendingDown, Plus, Sparkles, Play } from 'lucide-react';
+import { Layers, Clock, TrendingDown, Plus, Sparkles, Play, Download } from 'lucide-react';
 
 export const CriticalPathBanner = () => {
-  const { aggregates, setAddModalOpen, replanGraph, executeGraph, isLoading, isExecuting, executionError } = useDagStore();
+  const { 
+    aggregates, 
+    setAddModalOpen, 
+    replanGraph, 
+    executeGraph, 
+    exportProject, 
+    exportLoading, 
+    isLoading, 
+    isExecuting, 
+    executionError 
+  } = useDagStore();
   const { 
     nodeCount, 
     totalInputTokens, 
@@ -86,6 +96,16 @@ export const CriticalPathBanner = () => {
         >
           <Sparkles size={13} color="#6366f1" />
           Re-Benchmark
+        </button>
+
+        <button 
+          className="btn btn-secondary btn-sm"
+          onClick={exportProject}
+          title="Export project codebase, architecture specs, and ZIP archive"
+          disabled={isLoading || isExecuting || nodeCount === 0 || exportLoading}
+        >
+          <Download size={13} color="#10b981" />
+          {exportLoading ? 'Exporting...' : 'Export Code'}
         </button>
 
         <button 

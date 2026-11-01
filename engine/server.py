@@ -17,10 +17,12 @@ from pydantic import BaseModel
 
 try:
     from executor import DAGExecutor
+    from exporter import ProjectExporter
     from models.planner import DAGPlanner
     from models.token_forecaster import MODEL_PROFILES, TokenForecaster
 except ImportError:
     from engine.executor import DAGExecutor
+    from engine.exporter import ProjectExporter
     from engine.models.planner import DAGPlanner
     from engine.models.token_forecaster import MODEL_PROFILES, TokenForecaster
 
@@ -61,8 +63,15 @@ class ReplanRequest(BaseModel):
 class ExecuteRequest(BaseModel):
     graph: dict[str, dict[str, Any]]
     max_concurrency: int = 8
-    request_timeout: float = 120.0
-    max_retries: int = 2
+    request_timeout: float = 8.0
+    max_retries: int = 1
+
+
+class ExportRequest(BaseModel):
+    goal: str
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]] | None = []
+    aggregates: dict[str, Any] | None = {}
 
 
 @app.get("/api/health")
@@ -128,6 +137,21 @@ async def execute_graph(req: ExecuteRequest):
         raise HTTPException(status_code=400, detail=str(err)) from err
     except Exception as err:
         raise HTTPException(status_code=500, detail="DAG execution failed") from err
+
+
+@app.post("/api/export")
+def export_project(req: ExportRequest):
+    """Extract code deliverables and export as local project directory + zip."""
+    try:
+        exporter = ProjectExporter()
+        return exporter.export(
+            goal=req.goal,
+            nodes=req.nodes,
+            edges=req.edges or [],
+            aggregates=req.aggregates or {},
+        )
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
 
 
 if __name__ == "__main__":

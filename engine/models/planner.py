@@ -308,40 +308,104 @@ class DAGPlanner:
             return tasks
 
         # -------------------------------------------------------------------------
-        # TIER 3: Standard Application Tasks (3 to 4 Clear Steps)
+        # TIER 3: Standard Application Tasks (3 to 4 Clear Domain-Specific Steps)
         # -------------------------------------------------------------------------
-        is_ai_agent = match_intent(["agent", "llm", "ai", "model", "token", "prompt", "rag", "chat", "gpt", "gemini", "claude", "forecaster"])
+        is_realtime_chat = match_intent(["chat", "websocket", "socket", "realtime", "real-time", "messaging", "rooms", "messenger"])
+        is_weather_or_data = match_intent(["weather", "forecast", "sensor", "telemetry", "metric", "metrics", "chart", "charts"])
+        is_ai_agent = match_intent(["agent", "llm", "ai agent", "multi-agent", "rag", "langchain", "prompt engineering", "model router"])
         is_frontend = match_intent(["ui", "frontend", "dashboard", "react", "canvas", "web", "view", "interface", "client"])
-        is_backend_only = match_intent(["api", "backend", "microservice", "service", "rest", "graphql", "server", "endpoint"]) and not is_frontend
-        is_cli_or_script = match_intent(["cli", "script", "tool", "scraper", "scrape", "automation", "parser", "pipeline"]) and not (is_frontend or is_ai_agent)
+        is_backend_only = match_intent(["api", "backend", "microservice", "service", "rest", "graphql", "server", "endpoint"]) and not (is_frontend or is_realtime_chat or is_weather_or_data)
+        is_cli_or_script = match_intent(["cli", "script", "tool", "scraper", "scrape", "automation", "parser", "pipeline"]) and not (is_frontend or is_ai_agent or is_realtime_chat or is_weather_or_data)
 
-        if is_ai_agent:
+        if is_realtime_chat:
+            return [
+                {
+                    "id": f"{slug}_1_protocol",
+                    "title": f"1. {subject} WebSocket Protocol & Data Models",
+                    "description": f"Define WebSocket handshake, message frame schemas (JSON payload, event types), and user connection state for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": []
+                },
+                {
+                    "id": f"{slug}_2_gateway",
+                    "title": f"2. {subject} Socket Server & Broadcast Hub",
+                    "description": f"Implement WebSocket connection manager, broadcast hub, channel multiplexing, and message persistence for {clean_goal}.",
+                    "category": "Backend",
+                    "dependencies": [f"{slug}_1_protocol"]
+                },
+                {
+                    "id": f"{slug}_3_ui",
+                    "title": f"3. {subject} Chat Feed & Presence UI",
+                    "description": f"Build interactive chat window, message feed, active typing indicators, participant presence, and socket event listener for {clean_goal}.",
+                    "category": "Frontend",
+                    "dependencies": [f"{slug}_2_gateway"]
+                },
+                {
+                    "id": f"{slug}_4_qa",
+                    "title": f"4. {subject} Concurrency & Latency Benchmarks",
+                    "description": f"Simulate concurrent WebSocket clients, benchmark message delivery latency, test reconnection resilience, and verify packet ordering for {clean_goal}.",
+                    "category": "QA & Testing",
+                    "dependencies": [f"{slug}_3_ui"]
+                }
+            ]
+        elif is_weather_or_data:
+            return [
+                {
+                    "id": f"{slug}_1_ingest",
+                    "title": f"1. {subject} Telemetry Schema & Ingestion",
+                    "description": f"Define telemetry data schema, sensor models, and asynchronous data polling pipelines for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": []
+                },
+                {
+                    "id": f"{slug}_2_api",
+                    "title": f"2. {subject} Analytics Engine & REST APIs",
+                    "description": f"Implement aggregation algorithms, caching layer, and REST endpoints for historical and live forecasts for {clean_goal}.",
+                    "category": "Backend",
+                    "dependencies": [f"{slug}_1_ingest"]
+                },
+                {
+                    "id": f"{slug}_3_ui",
+                    "title": f"3. {subject} Reactive Dashboard & Visual Cards",
+                    "description": f"Create dynamic metric cards, hourly charts, interactive search, and responsive layout for {clean_goal}.",
+                    "category": "Frontend",
+                    "dependencies": [f"{slug}_2_api"]
+                },
+                {
+                    "id": f"{slug}_4_qa",
+                    "title": f"4. {subject} Integration Testing & Cache Validation",
+                    "description": f"Verify API contracts, validate caching TTL, test offline fallbacks, and benchmark render performance for {clean_goal}.",
+                    "category": "QA & Testing",
+                    "dependencies": [f"{slug}_3_ui"]
+                }
+            ]
+        elif is_ai_agent:
             return [
                 {
                     "id": f"{slug}_1_spec",
-                    "title": f"1. {subject} Protocol & Agent Roles",
-                    "description": f"Define agent boundaries, system prompt templates, tool definitions, and communication contracts for {clean_goal}.",
+                    "title": f"1. {subject} Agent Roles & System Prompts",
+                    "description": f"Define agent boundaries, system prompt templates, tool definitions, and memory contracts for {clean_goal}.",
                     "category": "Architecture",
                     "dependencies": []
                 },
                 {
                     "id": f"{slug}_2_engine",
-                    "title": f"2. {subject} Agent Engine & Router",
-                    "description": f"Implement core agent orchestration logic, model routing, and token budget management for {clean_goal}.",
+                    "title": f"2. {subject} Reasoning Loop & Tool Router",
+                    "description": f"Implement reasoning loop, tool execution dispatcher, context compaction, and token budget management for {clean_goal}.",
                     "category": "Backend",
                     "dependencies": [f"{slug}_1_spec"]
                 },
                 {
                     "id": f"{slug}_3_ui",
-                    "title": f"3. {subject} Interactive Canvas & UI",
-                    "description": f"Build user controls to visualize the agent DAG, edit prompts, and inspect live token metrics for {clean_goal}.",
+                    "title": f"3. {subject} Agent Workspace & Inspection UI",
+                    "description": f"Build user interface to interact with agents, stream reasoning steps, inspect tool inputs/outputs, and manage memory for {clean_goal}.",
                     "category": "Frontend",
                     "dependencies": [f"{slug}_2_engine"]
                 },
                 {
                     "id": f"{slug}_4_qa",
-                    "title": f"4. {subject} Verification & Benchmarks",
-                    "description": f"Test multi-agent workflows, benchmark token costs, and verify error recovery handling for {clean_goal}.",
+                    "title": f"4. {subject} Evaluation Benchmarks & Guardrails",
+                    "description": f"Test multi-step reasoning accuracy, benchmark token consumption across models, and verify error recovery guardrails for {clean_goal}.",
                     "category": "QA & Testing",
                     "dependencies": [f"{slug}_3_ui"]
                 }
