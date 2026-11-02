@@ -1,9 +1,19 @@
 import React from 'react';
 import { useDagStore } from '../../store/useDagStore';
-import { Layers, Activity, Clock, TrendingDown, Plus, Sparkles } from 'lucide-react';
+import { Layers, Clock, TrendingDown, Plus, Sparkles, Play, Download } from 'lucide-react';
 
 export const CriticalPathBanner = () => {
-  const { aggregates, setAddModalOpen, replanGraph, isLoading } = useDagStore();
+  const { 
+    aggregates, 
+    setAddModalOpen, 
+    replanGraph, 
+    executeGraph, 
+    exportProject, 
+    exportLoading, 
+    isLoading, 
+    isExecuting, 
+    executionError 
+  } = useDagStore();
   const { 
     nodeCount, 
     totalInputTokens, 
@@ -69,6 +79,15 @@ export const CriticalPathBanner = () => {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={executeGraph}
+          title="Execute the DAG using the assigned models"
+          disabled={isLoading || isExecuting || nodeCount === 0}
+        >
+          <Play size={13} />
+          {isExecuting ? 'Executing...' : 'Run DAG'}
+        </button>
         <button 
           className="btn btn-secondary btn-sm" 
           onClick={() => replanGraph()}
@@ -80,6 +99,16 @@ export const CriticalPathBanner = () => {
         </button>
 
         <button 
+          className="btn btn-secondary btn-sm"
+          onClick={exportProject}
+          title="Export project codebase, architecture specs, and ZIP archive"
+          disabled={isLoading || isExecuting || nodeCount === 0 || exportLoading}
+        >
+          <Download size={13} color="#10b981" />
+          {exportLoading ? 'Exporting...' : 'Export Code'}
+        </button>
+
+        <button 
           className="btn btn-primary btn-sm"
           onClick={() => setAddModalOpen(true, null)}
         >
@@ -87,6 +116,11 @@ export const CriticalPathBanner = () => {
           Add Custom Node
         </button>
       </div>
+      {executionError && (
+        <div style={{ color: '#f87171', fontSize: 11, marginTop: 6 }}>
+          Execution error: {executionError}
+        </div>
+      )}
     </div>
   );
 };

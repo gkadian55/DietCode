@@ -23,7 +23,7 @@ ENV/
 env/
 env.bak/
 venv.bak/
-
+.env
 # Python Bytecode & Cache
 __pycache__/
 *.py[cod]
@@ -70,4 +70,8 @@ htmlcov/
 ehthumbs.db
 Thumbs.db
 [Dd]esktop.ini
+
+# Project Generated Exports
+exports/
+
 

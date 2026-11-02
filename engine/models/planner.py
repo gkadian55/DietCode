@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 import networkx as nx
@@ -79,7 +80,8 @@ class DAGPlanner:
                 title=t["title"],
                 description=t["description"],
                 upstream_count=upstream_count,
-                depth=depth
+                depth=depth,
+                category=t.get("category", "")
             )
 
             processed_nodes.append({
@@ -110,174 +112,390 @@ class DAGPlanner:
             "aggregates": aggregates
         }
 
+    @staticmethod
+    def _extract_subject(clean_goal: str) -> str:
+        """Extract a readable subject title from natural language goal."""
+        s = clean_goal.strip()
+        s = re.sub(r'^(?:build|create|develop|make|implement|design|write|generate|set up)\s+(?:a|an|the)?\s*', '', s, flags=re.I)
+        s = re.sub(r'\s+(?:with|using|in)\s+.*$', '', s, flags=re.I).strip()
+        words = s.split()
+        if not words:
+            return "Application"
+        return " ".join(w.capitalize() for w in words[:4])
+
+    @staticmethod
+    def _make_slug(goal: str) -> str:
+        """Create a short alphanumeric slug to make node IDs unique per query."""
+        slug = re.sub(r'[^a-z0-9]+', '_', goal.lower()).strip('_')
+        return slug[:10] if slug else "task"
+
     def _generate_subtasks(self, goal: str) -> list[dict[str, Any]]:
-        """Decomposes goals into specialized subtasks with clear domain boundaries."""
+        """Decomposes goals adaptively into 1, 2, 4, or N steps based on true task complexity."""
         clean_goal = goal.strip()
         lower_goal = clean_goal.lower()
+        words = set(re.findall(r"\b\w+\b", lower_goal))
+        word_count = len(clean_goal.split())
+        subject = self._extract_subject(clean_goal)
+        slug = self._make_slug(clean_goal)
 
-        # Dynamic architectural module detection
-        has_db = any(w in lower_goal for w in ["db", "database", "sql", "postgres", "mongo", "prisma", "storage", "schema"])
-        has_auth = any(w in lower_goal for w in ["auth", "security", "jwt", "oauth", "rbac", "user", "session", "login"])
-        has_cache = any(w in lower_goal for w in ["cache", "redis", "memcached", "in-memory"])
-        has_queue = any(w in lower_goal for w in ["kafka", "queue", "stream", "pub-sub", "pubsub", "event", "worker", "rabbitmq", "celery", "distributed"])
-        has_ml = any(w in lower_goal for w in ["ai", "model", "llm", "agent", "train", "forecast", "embed", "rag", "onnx", "quantiz"])
-        has_api = any(w in lower_goal for w in ["api", "rest", "graphql", "grpc", "gateway", "endpoint", "microservice"])
-        has_ui = any(w in lower_goal for w in ["ui", "frontend", "dashboard", "canvas", "web", "react", "client", "visual", "view"])
-        has_devops = any(w in lower_goal for w in ["docker", "k8s", "kubernetes", "deploy", "ci", "cd", "cluster", "cloud", "infra"])
-        has_obs = any(w in lower_goal for w in ["observability", "metrics", "telemetry", "tracing", "monitoring", "log", "latency"])
+        def match_intent(keywords: list[str]) -> bool:
+            return any(kw in words or (len(kw) > 3 and kw in lower_goal) for kw in keywords)
 
-        # 1. Root Architecture Node
-        tasks: list[dict[str, Any]] = [
-            {
-                "id": "node-arch",
-                "title": "System Architecture & Protocol Spec",
-                "description": f"Formalize requirements, domain boundary specifications, and communication contracts for '{clean_goal}'.",
-                "category": "Architecture",
-                "dependencies": []
-            }
-        ]
+        # -------------------------------------------------------------------------
+        # TIER 1: Trivial / Micro Tasks (Exactly 1 Focused Step)
+        # -------------------------------------------------------------------------
+        is_micro_task = False
+        if any(k in lower_goal for k in ["hello world", "only create", "just create", "single file", "single page only", "generate an image", "create an image", "make an image", "regex for", "regex to"]):
+            is_micro_task = True
+        elif ("only" in words or "just" in words or "single" in words) and word_count <= 6 and not any(w in words for w in ["app", "system", "dashboard", "platform", "store", "chat", "service", "website", "api", "feed"]):
+            is_micro_task = True
 
-        # 2. Database Schema (if requested or complex)
-        if has_db or not (has_ml or has_queue):
+        if is_micro_task:
+            if "image" in lower_goal:
+                return [{
+                    "id": f"{slug}_1_gen",
+                    "title": f"1. Generate {subject} Asset",
+                    "description": f"Synthesize visual image asset according to prompt requirements: '{clean_goal}'.",
+                    "category": "Asset Generation",
+                    "dependencies": []
+                }]
+            elif "regex" in lower_goal:
+                return [{
+                    "id": f"{slug}_1_regex",
+                    "title": f"1. Implement {subject} Regex",
+                    "description": f"Write regular expression pattern and verify against target test inputs: '{clean_goal}'.",
+                    "category": "Utility",
+                    "dependencies": []
+                }]
+            elif "hello world" in lower_goal or "webpage" in lower_goal or "html" in lower_goal:
+                return [{
+                    "id": f"{slug}_1_page",
+                    "title": f"1. Create {subject} Webpage",
+                    "description": f"Build a clean single HTML page displaying '{clean_goal}' with centered responsive styling.",
+                    "category": "Frontend",
+                    "dependencies": []
+                }]
+            else:
+                return [{
+                    "id": f"{slug}_1_task",
+                    "title": f"1. Implement: {subject}",
+                    "description": f"Directly implement the requested single-step task: '{clean_goal}'.",
+                    "category": "Implementation",
+                    "dependencies": []
+                }]
+
+        # -------------------------------------------------------------------------
+        # TIER 2: Small / 2-Step Tasks (Exactly 2 Steps)
+        # -------------------------------------------------------------------------
+        is_small_task = (
+            word_count <= 8 
+            and not any(w in words for w in ["fullstack", "enterprise", "system", "architecture", "distributed", "platform", "microservice", "multi", "store", "chat", "dashboard", "database"])
+        )
+        if is_small_task:
+            if match_intent(["react", "button", "counter", "form", "toggle", "component", "modal", "ui", "widget"]):
+                return [
+                    {
+                        "id": f"{slug}_1_comp",
+                        "title": f"1. {subject} Component & State",
+                        "description": f"Create the component structure, define local state, and apply styles for {clean_goal}.",
+                        "category": "Frontend",
+                        "dependencies": []
+                    },
+                    {
+                        "id": f"{slug}_2_interact",
+                        "title": f"2. {subject} Handlers & Behavior",
+                        "description": "Wire up user click events, state transitions, and validation feedback.",
+                        "category": "Frontend",
+                        "dependencies": [f"{slug}_1_comp"]
+                    }
+                ]
+            elif match_intent(["script", "fetch", "api", "scrape", "cli", "utility"]):
+                return [
+                    {
+                        "id": f"{slug}_1_fetch",
+                        "title": f"1. {subject} Logic & API Request",
+                        "description": f"Implement request handling, data fetching, and response parsing for {clean_goal}.",
+                        "category": "Backend",
+                        "dependencies": []
+                    },
+                    {
+                        "id": f"{slug}_2_out",
+                        "title": f"2. {subject} Formatting & Error Handling",
+                        "description": "Format output presentation, add input validation, and handle error scenarios gracefully.",
+                        "category": "QA & Testing",
+                        "dependencies": [f"{slug}_1_fetch"]
+                    }
+                ]
+
+        # -------------------------------------------------------------------------
+        # TIER 4: Enterprise Complex Multi-Service Architecture (5 to 7 Steps)
+        # -------------------------------------------------------------------------
+        complex_signals = ["distributed", "microservice", "microservices", "kafka", "queue", "redis", "cache", "kubernetes", "k8s", "docker", "telemetry", "observability", "auth", "jwt", "database", "postgres", "sql"]
+        signal_count = sum(1 for s in complex_signals if s in words or s in lower_goal)
+        is_enterprise_complex = signal_count >= 3 or ("distributed" in words and any(w in words for w in ["multi", "system", "architecture"]))
+
+        if is_enterprise_complex:
+            tasks: list[dict[str, Any]] = [
+                {
+                    "id": f"{slug}_1_arch",
+                    "title": f"1. {subject} Architecture & Spec",
+                    "description": f"Define system topology, service boundary contracts, and communication protocols for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": []
+                },
+                {
+                    "id": f"{slug}_2_data",
+                    "title": f"2. {subject} Distributed Schemas & DB",
+                    "description": f"Formulate persistent data schemas, relational indexes, and automated transactional migrations for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": [f"{slug}_1_arch"]
+                }
+            ]
+
+            has_auth = match_intent(["auth", "security", "jwt", "oauth", "rbac", "user", "session", "login"])
+            has_queue = match_intent(["kafka", "queue", "stream", "pubsub", "event", "rabbitmq", "celery", "distributed"])
+            has_ui = match_intent(["ui", "frontend", "dashboard", "react", "canvas", "web", "view"])
+
+            prev_id = f"{slug}_2_data"
+            if has_auth:
+                auth_id = f"{slug}_3_auth"
+                tasks.append({
+                    "id": auth_id,
+                    "title": f"{len(tasks) + 1}. {subject} Auth & RBAC Security",
+                    "description": "Implement token signing, session rotation, security middleware, and role-based permissions.",
+                    "category": "Architecture",
+                    "dependencies": [prev_id]
+                })
+                prev_id = auth_id
+
+            if has_queue:
+                queue_id = f"{slug}_4_queue"
+                tasks.append({
+                    "id": queue_id,
+                    "title": f"{len(tasks) + 1}. {subject} Event Bus & Workers",
+                    "description": "Deploy partitioned event streams, backpressure management, and asynchronous background workers.",
+                    "category": "Backend",
+                    "dependencies": [prev_id]
+                })
+                prev_id = queue_id
+
+            core_id = f"{slug}_{len(tasks) + 1}_core"
             tasks.append({
-                "id": "node-db",
-                "title": "Data Schema, Migrations & Indexing",
-                "description": "Formulate persistent models, transactional constraints, relational indexes, and migration scripts.",
-                "category": "Database",
-                "dependencies": ["node-arch"]
+                "id": core_id,
+                "title": f"{len(tasks) + 1}. {subject} Service Engine & APIs",
+                "description": f"Implement high-throughput business logic services, RPC/REST interfaces, and state evaluators for {clean_goal}.",
+                "category": "Backend",
+                "dependencies": [prev_id]
             })
 
-        # 3. Auth & Access Control
-        if has_auth:
-            db_dep = ["node-db"] if any(t["id"] == "node-db" for t in tasks) else ["node-arch"]
+            if has_ui:
+                ui_id = f"{slug}_{len(tasks) + 1}_ui"
+                tasks.append({
+                    "id": ui_id,
+                    "title": f"{len(tasks) + 1}. {subject} Real-Time Dashboard",
+                    "description": f"Build responsive visual interface, telemetry widgets, and live WebSocket state synchronization for {clean_goal}.",
+                    "category": "Frontend",
+                    "dependencies": [core_id]
+                })
+
             tasks.append({
-                "id": "node-auth",
-                "title": "Auth, JWT & Role-Based Access Control",
-                "description": "Implement cryptographic token signing, session rotation, RBAC middleware, and credential verification.",
-                "category": "Security",
-                "dependencies": db_dep
+                "id": f"{slug}_{len(tasks) + 1}_qa",
+                "title": f"{len(tasks) + 1}. {subject} End-to-End Stress & QA",
+                "description": f"Run contract tests, load benchmarks, failure resilience checks, and end-to-end integration flows for {clean_goal}.",
+                "category": "QA & Testing",
+                "dependencies": [tasks[-1]["id"]]
             })
+            return tasks
 
-        # 4. In-Memory Caching
-        if has_cache:
-            db_dep = ["node-db"] if any(t["id"] == "node-db" for t in tasks) else ["node-arch"]
-            tasks.append({
-                "id": "node-cache",
-                "title": "High-Throughput In-Memory Caching",
-                "description": "Deploy cache eviction policies (LRU/TTL), connection pooling, and serialized key-value caching.",
-                "category": "Performance",
-                "dependencies": db_dep
-            })
+        # -------------------------------------------------------------------------
+        # TIER 3: Standard Application Tasks (3 to 4 Clear Domain-Specific Steps)
+        # -------------------------------------------------------------------------
+        is_realtime_chat = match_intent(["chat", "websocket", "socket", "realtime", "real-time", "messaging", "rooms", "messenger"])
+        is_weather_or_data = match_intent(["weather", "forecast", "sensor", "telemetry", "metric", "metrics", "chart", "charts"])
+        is_ai_agent = match_intent(["agent", "llm", "ai agent", "multi-agent", "rag", "langchain", "prompt engineering", "model router"])
+        is_frontend = match_intent(["ui", "frontend", "dashboard", "react", "canvas", "web", "view", "interface", "client"])
+        is_backend_only = match_intent(["api", "backend", "microservice", "service", "rest", "graphql", "server", "endpoint"]) and not (is_frontend or is_realtime_chat or is_weather_or_data)
+        is_cli_or_script = match_intent(["cli", "script", "tool", "scraper", "scrape", "automation", "parser", "pipeline"]) and not (is_frontend or is_ai_agent or is_realtime_chat or is_weather_or_data)
 
-        # 5. Distributed Queues & Event Streaming
-        if has_queue:
-            tasks.append({
-                "id": "node-queue",
-                "title": "Distributed Event Bus & Worker Pipeline",
-                "description": "Establish partitioned event pub-sub streaming, backpressure handling, and asynchronous workers.",
-                "category": "Distributed Systems",
-                "dependencies": ["node-arch"]
-            })
-
-        # 6. Core Processing Engine
-        core_deps = ["node-arch"]
-        if any(t["id"] == "node-db" for t in tasks):
-            core_deps.append("node-db")
-        if any(t["id"] == "node-queue" for t in tasks):
-            core_deps.append("node-queue")
-
-        tasks.append({
-            "id": "node-core",
-            "title": "Core Algorithmic Engine & Business Logic",
-            "description": "Construct low-latency stateful execution services, domain rule evaluators, and atomic workflows.",
-            "category": "Backend",
-            "dependencies": core_deps
-        })
-
-        # 7. Machine Learning & Embeddings
-        if has_ml:
-            ml_dep = ["node-core"]
-            if any(t["id"] == "node-db" for t in tasks):
-                ml_dep.append("node-db")
-            tasks.append({
-                "id": "node-ml",
-                "title": "Local ML Pipeline & Token Forecaster",
-                "description": "Feature vectorization, local GGUF/ONNX model inference, quantization, and tensor caching.",
-                "category": "Machine Learning",
-                "dependencies": ml_dep
-            })
-
-        # 8. API Gateway & RPC
-        if has_api or has_ui:
-            api_deps = ["node-core"]
-            if any(t["id"] == "node-auth" for t in tasks):
-                api_deps.append("node-auth")
-            tasks.append({
-                "id": "node-api",
-                "title": "API Gateway & High-Speed Interfaces",
-                "description": "Expose typed REST/gRPC endpoints, schema validation, rate-limiting, and error handlers.",
-                "category": "API Layer",
-                "dependencies": api_deps
-            })
-
-        # 9. Client UI & Canvas
-        if has_ui or len(tasks) < 5:
-            ui_dep = ["node-api"] if any(t["id"] == "node-api" for t in tasks) else ["node-core"]
-            tasks.append({
-                "id": "node-ui",
-                "title": "Client UI & Reactive State Dashboard",
-                "description": "Render interactive canvas views, live telemetry charts, micro-animations, and client state sync.",
-                "category": "Frontend",
-                "dependencies": ui_dep
-            })
-
-        # 10. Containerization & DevOps
-        if has_devops:
-            devops_dep = ["node-core"]
-            if any(t["id"] == "node-ui" for t in tasks):
-                devops_dep.append("node-ui")
-            tasks.append({
-                "id": "node-devops",
-                "title": "Containerization & Infrastructure as Code",
-                "description": "Multi-stage Docker builds, Kubernetes manifests, health probes, and automated CI/CD stages.",
-                "category": "DevOps",
-                "dependencies": devops_dep
-            })
-
-        # 11. Observability & Tracing
-        if has_obs or len(tasks) >= 6:
-            obs_deps = ["node-core"]
-            if any(t["id"] == "node-api" for t in tasks):
-                obs_deps.append("node-api")
-            tasks.append({
-                "id": "node-obs",
-                "title": "Telemetry & Distributed Tracing",
-                "description": "Integrate OpenTelemetry metrics, Prometheus scrapers, structured logging, and latency tracing.",
-                "category": "Observability",
-                "dependencies": obs_deps
-            })
-
-        # 12. Automated Testing Suite (Terminal node)
-        qa_deps = []
-        if any(t["id"] == "node-ui" for t in tasks):
-            qa_deps.append("node-ui")
-        elif any(t["id"] == "node-api" for t in tasks):
-            qa_deps.append("node-api")
+        if is_realtime_chat:
+            return [
+                {
+                    "id": f"{slug}_1_protocol",
+                    "title": f"1. {subject} WebSocket Protocol & Data Models",
+                    "description": f"Define WebSocket handshake, message frame schemas (JSON payload, event types), and user connection state for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": []
+                },
+                {
+                    "id": f"{slug}_2_gateway",
+                    "title": f"2. {subject} Socket Server & Broadcast Hub",
+                    "description": f"Implement WebSocket connection manager, broadcast hub, channel multiplexing, and message persistence for {clean_goal}.",
+                    "category": "Backend",
+                    "dependencies": [f"{slug}_1_protocol"]
+                },
+                {
+                    "id": f"{slug}_3_ui",
+                    "title": f"3. {subject} Chat Feed & Presence UI",
+                    "description": f"Build interactive chat window, message feed, active typing indicators, participant presence, and socket event listener for {clean_goal}.",
+                    "category": "Frontend",
+                    "dependencies": [f"{slug}_2_gateway"]
+                },
+                {
+                    "id": f"{slug}_4_qa",
+                    "title": f"4. {subject} Concurrency & Latency Benchmarks",
+                    "description": f"Simulate concurrent WebSocket clients, benchmark message delivery latency, test reconnection resilience, and verify packet ordering for {clean_goal}.",
+                    "category": "QA & Testing",
+                    "dependencies": [f"{slug}_3_ui"]
+                }
+            ]
+        elif is_weather_or_data:
+            return [
+                {
+                    "id": f"{slug}_1_ingest",
+                    "title": f"1. {subject} Telemetry Schema & Ingestion",
+                    "description": f"Define telemetry data schema, sensor models, and asynchronous data polling pipelines for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": []
+                },
+                {
+                    "id": f"{slug}_2_api",
+                    "title": f"2. {subject} Analytics Engine & REST APIs",
+                    "description": f"Implement aggregation algorithms, caching layer, and REST endpoints for historical and live forecasts for {clean_goal}.",
+                    "category": "Backend",
+                    "dependencies": [f"{slug}_1_ingest"]
+                },
+                {
+                    "id": f"{slug}_3_ui",
+                    "title": f"3. {subject} Reactive Dashboard & Visual Cards",
+                    "description": f"Create dynamic metric cards, hourly charts, interactive search, and responsive layout for {clean_goal}.",
+                    "category": "Frontend",
+                    "dependencies": [f"{slug}_2_api"]
+                },
+                {
+                    "id": f"{slug}_4_qa",
+                    "title": f"4. {subject} Integration Testing & Cache Validation",
+                    "description": f"Verify API contracts, validate caching TTL, test offline fallbacks, and benchmark render performance for {clean_goal}.",
+                    "category": "QA & Testing",
+                    "dependencies": [f"{slug}_3_ui"]
+                }
+            ]
+        elif is_ai_agent:
+            return [
+                {
+                    "id": f"{slug}_1_spec",
+                    "title": f"1. {subject} Agent Roles & System Prompts",
+                    "description": f"Define agent boundaries, system prompt templates, tool definitions, and memory contracts for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": []
+                },
+                {
+                    "id": f"{slug}_2_engine",
+                    "title": f"2. {subject} Reasoning Loop & Tool Router",
+                    "description": f"Implement reasoning loop, tool execution dispatcher, context compaction, and token budget management for {clean_goal}.",
+                    "category": "Backend",
+                    "dependencies": [f"{slug}_1_spec"]
+                },
+                {
+                    "id": f"{slug}_3_ui",
+                    "title": f"3. {subject} Agent Workspace & Inspection UI",
+                    "description": f"Build user interface to interact with agents, stream reasoning steps, inspect tool inputs/outputs, and manage memory for {clean_goal}.",
+                    "category": "Frontend",
+                    "dependencies": [f"{slug}_2_engine"]
+                },
+                {
+                    "id": f"{slug}_4_qa",
+                    "title": f"4. {subject} Evaluation Benchmarks & Guardrails",
+                    "description": f"Test multi-step reasoning accuracy, benchmark token consumption across models, and verify error recovery guardrails for {clean_goal}.",
+                    "category": "QA & Testing",
+                    "dependencies": [f"{slug}_3_ui"]
+                }
+            ]
+        elif is_cli_or_script:
+            return [
+                {
+                    "id": f"{slug}_1_cli",
+                    "title": f"1. {subject} CLI Commands & Config",
+                    "description": f"Define command-line options, flag arguments, and configuration loading for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": []
+                },
+                {
+                    "id": f"{slug}_2_core",
+                    "title": f"2. {subject} Processing Pipeline",
+                    "description": f"Build data transformation, file handling, and core operational logic with progress feedback for {clean_goal}.",
+                    "category": "Backend",
+                    "dependencies": [f"{slug}_1_cli"]
+                },
+                {
+                    "id": f"{slug}_3_qa",
+                    "title": f"3. {subject} CLI Validation & Packaging",
+                    "description": f"Write integration test cases, verify exit codes, and package the utility for distribution for {clean_goal}.",
+                    "category": "QA & Testing",
+                    "dependencies": [f"{slug}_2_core"]
+                }
+            ]
+        elif is_backend_only:
+            return [
+                {
+                    "id": f"{slug}_1_schema",
+                    "title": f"1. {subject} API Contract & Schema",
+                    "description": f"Design endpoint specifications, request/response models, and database table schemas for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": []
+                },
+                {
+                    "id": f"{slug}_2_services",
+                    "title": f"2. {subject} Handlers & Business Logic",
+                    "description": f"Implement database CRUD operations, business logic controllers, and service handlers for {clean_goal}.",
+                    "category": "Backend",
+                    "dependencies": [f"{slug}_1_schema"]
+                },
+                {
+                    "id": f"{slug}_3_security",
+                    "title": f"3. {subject} Auth & Security Guardrails",
+                    "description": f"Add user authentication, input validation middleware, rate-limiting, and error handling for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": [f"{slug}_2_services"]
+                },
+                {
+                    "id": f"{slug}_4_qa",
+                    "title": f"4. {subject} API Test Suite & Validation",
+                    "description": f"Write automated unit tests for all endpoints and verify database transactional integrity for {clean_goal}.",
+                    "category": "QA & Testing",
+                    "dependencies": [f"{slug}_3_security"]
+                }
+            ]
         else:
-            qa_deps.append("node-core")
-
-        if any(t["id"] == "node-obs" for t in tasks):
-            qa_deps.append("node-obs")
-
-        tasks.append({
-            "id": "node-qa",
-            "title": "Automated End-to-End & Stress Testing",
-            "description": "Execute contract tests, chaos resilience injection, integration mocks, and load benchmarks.",
-            "category": "QA & Testing",
-            "dependencies": qa_deps
-        })
-
-        return tasks
+            return [
+                {
+                    "id": f"{slug}_1_arch",
+                    "title": f"1. {subject} Architecture & Data Models",
+                    "description": f"Define project structure, data entities, and component specifications for {clean_goal}.",
+                    "category": "Architecture",
+                    "dependencies": []
+                },
+                {
+                    "id": f"{slug}_2_backend",
+                    "title": f"2. {subject} Core Backend & API Routes",
+                    "description": f"Implement server routes, data processing functions, and business logic handlers for {clean_goal}.",
+                    "category": "Backend",
+                    "dependencies": [f"{slug}_1_arch"]
+                },
+                {
+                    "id": f"{slug}_3_frontend",
+                    "title": f"3. {subject} Frontend UI & Reactive State",
+                    "description": f"Create user interface views, input forms, and connect them to backend API endpoints for {clean_goal}.",
+                    "category": "Frontend",
+                    "dependencies": [f"{slug}_2_backend"]
+                },
+                {
+                    "id": f"{slug}_4_qa",
+                    "title": f"4. {subject} Integration Testing & Polish",
+                    "description": f"Verify end-to-end user workflows, test edge cases, and ensure clean error handling for {clean_goal}.",
+                    "category": "QA & Testing",
+                    "dependencies": [f"{slug}_3_frontend"]
+                }
+            ]
 
     def calculate_graph_aggregates(self, nodes: list[dict[str, Any]], g: nx.DiGraph | None = None) -> dict[str, Any]:
         """Calculates total tokenomics, comparative costs, latency, and critical path."""

@@ -18,7 +18,7 @@ MODEL_PROFILES = {
         "outputCostPerM": 15.00,
         "tokensPerSec": 75,
         "reasoningScore": 96,
-        "bestFor": ["Complex Systems", "Full-Stack Refactor", "Multi-file Architecture"]
+        "bestFor": ["Complex Systems", "Full-Stack Refactor", "Multi-file Architecture", "Architecture", "Security", "Design"]
     },
     "gpt-4o": {
         "displayName": "ChatGPT (GPT-4o)",
@@ -28,7 +28,7 @@ MODEL_PROFILES = {
         "outputCostPerM": 10.00,
         "tokensPerSec": 85,
         "reasoningScore": 93,
-        "bestFor": ["Algorithm Design", "API Orchestration", "General Problem Solving"]
+        "bestFor": ["Algorithm Design", "API Orchestration", "General Problem Solving", "Backend", "Core Engine", "Core Logic"]
     },
     "gemini-2-0-flash": {
         "displayName": "Gemini 2.0 Flash",
@@ -38,7 +38,7 @@ MODEL_PROFILES = {
         "outputCostPerM": 0.40,
         "tokensPerSec": 150,
         "reasoningScore": 88,
-        "bestFor": ["High-Throughput IO", "Rapid Prototyping", "Cost-Critical Batches"]
+        "bestFor": ["High-Throughput IO", "Rapid Prototyping", "Cost-Critical Batches", "Frontend", "UI", "Interface"]
     },
     "gemini-1-5-pro": {
         "displayName": "Gemini 1.5 Pro",
@@ -48,7 +48,7 @@ MODEL_PROFILES = {
         "outputCostPerM": 5.00,
         "tokensPerSec": 65,
         "reasoningScore": 92,
-        "bestFor": ["Long Context Dependency", "Deep Code Audit", "Large Codebases"]
+        "bestFor": ["Long Context Dependency", "Deep Code Audit", "Large Codebases", "Distributed Systems"]
     },
     "claude-3-5-haiku": {
         "displayName": "Claude 3.5 Haiku",
@@ -58,7 +58,7 @@ MODEL_PROFILES = {
         "outputCostPerM": 4.00,
         "tokensPerSec": 125,
         "reasoningScore": 86,
-        "bestFor": ["Unit Test Generation", "Documentation", "Fast Micro-Tasks"]
+        "bestFor": ["Unit Test Generation", "Documentation", "Fast Micro-Tasks", "QA & Testing", "Testing", "Validation"]
     },
     "gpt-4o-mini": {
         "displayName": "GPT-4o Mini",
@@ -68,7 +68,7 @@ MODEL_PROFILES = {
         "outputCostPerM": 0.60,
         "tokensPerSec": 140,
         "reasoningScore": 83,
-        "bestFor": ["Data Parsing", "Boilerplate Code", "Simple Regex & Schema"]
+        "bestFor": ["Data Parsing", "Boilerplate Code", "Simple Regex & Schema", "Utility", "Implementation", "Asset Generation"]
     }
 }
 
@@ -182,8 +182,15 @@ class TokenForecaster:
             pickle.dump(self.model, f)
         print("[TokenForecaster] Self-trained model successfully trained and saved to disk.")
 
-    def forecast_node(self, title: str | None, description: str | None, upstream_count: int | None = 0, depth: int | None = 1):
-        """Fast inference (<2ms) predicting tokens, latency, cost per LLM, and the Pareto-optimal agent."""
+    def forecast_node(
+        self,
+        title: str | None,
+        description: str | None,
+        upstream_count: int | None = 0,
+        depth: int | None = 1,
+        category: str | None = None
+    ):
+        """Fast inference (<2ms) predicting tokens, latency, cost per LLM, and the criteria-matched agent."""
         safe_upstream = max(0, int(upstream_count or 0))
         safe_depth = max(1, int(depth or 1))
 
@@ -195,14 +202,19 @@ class TokenForecaster:
         total_tokens = in_tokens + out_tokens
 
         # Complexity rating 1-100
-        safe_text = f"{title or ''} {description or ''}".lower()
+        safe_text = f"{title or ''} {description or ''} {category or ''}".lower()
+        category_lower = str(category or "").lower()
         complexity_score = min(99, max(25, int(
             (out_tokens / 50) + (safe_upstream * 8) + (15 if "complex" in safe_text or "distributed" in safe_text else 0)
         )))
 
-        # Evaluate across all LLM models
+        # Evaluate across all LLM models based on real-world engineering criteria
         evaluations = {}
         candidate_scores = []
+
+        is_architecture_or_security = any(k in category_lower or k in safe_text for k in ["architecture", "security", "auth", "database", "spec", "schema", "design"])
+        is_testing_or_boilerplate = any(k in category_lower or k in safe_text for k in ["test", "testing", "qa", "boilerplate", "validation", "mock", "docs", "lint"])
+        is_rapid_ui_or_streaming = any(k in category_lower or k in safe_text for k in ["frontend", "ui", "dashboard", "canvas", "streaming", "prototype"])
 
         for model_id, prof in MODEL_PROFILES.items():
             in_cost = (in_tokens / 1_000_000.0) * prof["inputCostPerM"]
@@ -222,22 +234,41 @@ class TokenForecaster:
                 "reasoningScore": prof["reasoningScore"]
             }
 
-            # Efficiency Score calculation (Pareto tradeoff between reasoning capability, cost, and latency)
-            if complexity_score > 75:
-                # Premium reasoning task (favor Claude 3.5 Sonnet / GPT-4o)
-                score = (prof["reasoningScore"] * 2.0) - (total_cost * 1500) - (latency_sec * 0.5)
-            elif complexity_score > 45:
-                # Balanced task
-                score = (prof["reasoningScore"] * 1.0) - (total_cost * 3000) - (latency_sec * 1.0)
+            # Domain affinity bonus based on model's documented strengths
+            affinity = 0.0
+            for tag in prof.get("bestFor", []):
+                tag_l = tag.lower()
+                if tag_l in safe_text or tag_l in category_lower:
+                    affinity += 18.0
+
+            # Criteria-based model scoring
+            if is_architecture_or_security:
+                # Top priority: Deep reasoning score & multi-file contracts (Claude 3.5 Sonnet / GPT-4o)
+                score = (prof["reasoningScore"] * 2.0) + affinity - (total_cost * 80.0) - (latency_sec * 0.1)
+                rationale = f"Matched for high reasoning score ({prof['reasoningScore']}/100) and system architecture capability."
+            elif is_testing_or_boilerplate:
+                # Top priority: Fast turnaround & cost efficiency (Claude 3.5 Haiku / GPT-4o Mini)
+                score = (prof["reasoningScore"] * 0.5) + affinity - (total_cost * 120.0) - (latency_sec * 0.3)
+                rationale = f"Matched for rapid response and high cost-efficiency on tests and validation."
+            elif is_rapid_ui_or_streaming:
+                # Top priority: High throughput & rapid canvas/UI prototyping (Gemini 2.0 Flash)
+                score = (prof["reasoningScore"] * 1.0) + affinity - (total_cost * 100.0) - (latency_sec * 0.2)
+                rationale = f"Matched for high throughput ({prof['tokensPerSec']} tok/s) and rapid UI iteration."
+            elif complexity_score >= 65:
+                # Complex backend logic & algorithms (GPT-4o / Claude 3.5 Sonnet)
+                score = (prof["reasoningScore"] * 1.5) + affinity - (total_cost * 80.0) - (latency_sec * 0.2)
+                rationale = f"Matched for complex algorithmic orchestration and multi-step execution."
             else:
-                # Simple/boilerplate task (favor Gemini Flash / GPT-4o-mini)
-                score = (prof["reasoningScore"] * 0.5) - (total_cost * 6000) - (latency_sec * 1.5)
+                # Balanced general engineering tasks
+                score = (prof["reasoningScore"] * 1.0) + affinity - (total_cost * 120.0) - (latency_sec * 0.2)
+                rationale = f"Optimal balance of cost, reasoning, and latency for standard tasks."
 
-            candidate_scores.append((model_id, score))
+            candidate_scores.append((model_id, score, rationale))
 
-        # Select highest Pareto score as recommended agent
+        # Select model with highest criteria score
         candidate_scores.sort(key=lambda x: x[1], reverse=True)
         recommended_agent_id = candidate_scores[0][0]
+        recommended_rationale = candidate_scores[0][2]
         recommended_profile = MODEL_PROFILES[recommended_agent_id]
 
         return {
@@ -254,7 +285,7 @@ class TokenForecaster:
                 "color": recommended_profile["color"],
                 "estimatedCost": evaluations[recommended_agent_id]["totalCost"],
                 "estimatedLatency": evaluations[recommended_agent_id]["latencySec"],
-                "rationale": f"Optimal Pareto match for {complexity_score}/100 complexity requirement."
+                "rationale": recommended_rationale
             },
             "modelEvaluations": evaluations
         }

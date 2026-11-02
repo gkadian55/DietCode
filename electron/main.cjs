@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
@@ -130,6 +130,11 @@ ipcMain.on('window-close', () => {
 });
 
 ipcMain.handle('ping', () => 'pong');
+ipcMain.handle('open-path', async (_event, targetPath) => {
+  if (targetPath) {
+    return shell.openPath(targetPath);
+  }
+});
 ipcMain.handle('get-backend-status', async () => {
   return new Promise((resolve) => {
     const req = http.get(`http://127.0.0.1:${BACKEND_PORT}/api/health`, (res) => {

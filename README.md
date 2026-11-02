@@ -48,6 +48,7 @@ DietCode/
 │   └── index.css              # Custom glassmorphic design system
 └── engine/                    # Local Python ML Engine
     ├── server.py              # FastAPI server (port 8765)
+    ├── executor.py            # Async DAG execution and LiteLLM telemetry
     ├── models/
     │   ├── token_forecaster.py# Self-trained token & cost regressor
     │   └── planner.py         # Topological DAG decomposition & aggregates
@@ -67,6 +68,24 @@ npm run dev
 ### Run Python Engine Standalone
 ```powershell
 .\.venv\Scripts\python.exe engine\server.py
+```
+
+### Optional local Ollama routing
+Install Ollama and a coding model before enabling local task execution:
+```powershell
+ollama serve
+ollama pull qwen2.5-coder:7b
+```
+
+The executor routes routine tasks (tests, documentation, UI, and boilerplate)
+to Ollama and keeps architecture, security, distributed-systems, and algorithm
+tasks on Gemini by default. Configure this behavior in `.env`:
+```env
+GEMINI_API_KEY=your-gemini-api-key
+DIETCODE_PRIMARY_MODEL=gemini-3-8-flash
+DIETCODE_LOCAL_MODEL=ollama/qwen2.5-coder:7b
+DIETCODE_LOCAL_ROUTING=true
+OLLAMA_API_BASE=http://127.0.0.1:11434
 ```
 
 ### Build Production Bundle

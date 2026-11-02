@@ -5,6 +5,7 @@ import { TokenomicsDashboard } from './components/dashboard/TokenomicsDashboard'
 import { AgentCanvas } from './components/canvas/AgentCanvas';
 import { NodeInspector } from './components/inspector/NodeInspector';
 import { AddNodeModal } from './components/modal/AddNodeModal';
+import { ExportModal } from './components/modal/ExportModal';
 import { useDagStore } from './store/useDagStore';
 
 export function App() {
@@ -38,6 +39,7 @@ export function App() {
         <NodeInspector />
       </div>
       <AddNodeModal />
+      <ExportModal />
     </div>
   );
 }

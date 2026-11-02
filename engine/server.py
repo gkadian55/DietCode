@@ -16,9 +16,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 try:
+    from executor import DAGExecutor
+    from exporter import ProjectExporter
     from models.planner import DAGPlanner
     from models.token_forecaster import MODEL_PROFILES, TokenForecaster
 except ImportError:
+    from engine.executor import DAGExecutor
+    from engine.exporter import ProjectExporter
     from engine.models.planner import DAGPlanner
     from engine.models.token_forecaster import MODEL_PROFILES, TokenForecaster
 
@@ -54,6 +58,20 @@ class PredictNodeRequest(BaseModel):
 class ReplanRequest(BaseModel):
     nodes: list[dict[str, Any]]
     edges: list[dict[str, Any]]
+
+
+class ExecuteRequest(BaseModel):
+    graph: dict[str, dict[str, Any]]
+    max_concurrency: int = 8
+    request_timeout: float = 8.0
+    max_retries: int = 1
+
+
+class ExportRequest(BaseModel):
+    goal: str
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]] | None = []
+    aggregates: dict[str, Any] | None = {}
 
 
 @app.get("/api/health")
@@ -97,6 +115,41 @@ def replan_graph(req: ReplanRequest):
             "status": "success",
             "aggregates": aggregates
         }
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.post("/api/execute")
+async def execute_graph(req: ExecuteRequest):
+    """Execute the frontend DAG and return generated text plus token telemetry."""
+    try:
+        executor = DAGExecutor(
+            max_concurrency=req.max_concurrency,
+            request_timeout=req.request_timeout,
+            max_retries=req.max_retries,
+        )
+        results = await executor.execute(req.graph)
+        return {
+            "status": "completed",
+            "results": results,
+        }
+    except (TypeError, ValueError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail="DAG execution failed") from err
+
+
+@app.post("/api/export")
+def export_project(req: ExportRequest):
+    """Extract code deliverables and export as local project directory + zip."""
+    try:
+        exporter = ProjectExporter()
+        return exporter.export(
+            goal=req.goal,
+            nodes=req.nodes,
+            edges=req.edges or [],
+            aggregates=req.aggregates or {},
+        )
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
 

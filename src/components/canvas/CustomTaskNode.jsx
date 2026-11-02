@@ -1,7 +1,7 @@
 import React, { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { useDagStore } from '../../store/useDagStore';
-import { Plus, Trash2, Cpu, Zap, DollarSign } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 
 export const CustomTaskNode = memo(({ id, data, selected }) => {
   const { aggregates, setSelectedNode, setAddModalOpen, removeNode } = useDagStore();
@@ -10,6 +10,14 @@ export const CustomTaskNode = memo(({ id, data, selected }) => {
   const assignedAgentId = data.assignedAgent || data.recommendedAgent?.id;
   const currentModelEval = data.modelEvaluations?.[assignedAgentId] || {};
   const agentColor = data.recommendedAgent?.color || '#6366f1';
+  const executionStatus = data.executionStatus || 'pending';
+  const actualTokens = data.actualTokens;
+  const statusColor = {
+    queued: '#f59e0b',
+    running: '#06b6d4',
+    completed: '#10b981',
+    failed: '#f43f5e'
+  }[executionStatus] || '#94a3b8';
 
   const handleClick = (e) => {
     e.stopPropagation();
@@ -40,7 +48,12 @@ export const CustomTaskNode = memo(({ id, data, selected }) => {
 
       {/* Top Category & Action Controls */}
       <div className="agent-node-header">
-        <span className="agent-node-category">{data.category || 'Subtask'}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span className="agent-node-category">{data.category || 'Subtask'}</span>
+          <span style={{ color: statusColor, fontSize: 9, fontWeight: 700, textTransform: 'uppercase' }}>
+            {executionStatus}
+          </span>
+        </div>
         <div style={{ display: 'flex', gap: 4 }}>
           {isCriticalPath && (
             <span style={{ fontSize: 9, color: '#f43f5e', fontWeight: 700, padding: '2px 4px', background: 'rgba(244,63,94,0.15)', borderRadius: 3 }}>
@@ -93,15 +106,15 @@ export const CustomTaskNode = memo(({ id, data, selected }) => {
       {/* Token Metrics Row */}
       <div className="token-metrics-row">
         <div className="token-metric-cell">
-          <div className="token-metric-label">In Tok</div>
+          <div className="token-metric-label">{actualTokens ? 'Actual In' : 'Forecast In'}</div>
           <div className="token-metric-val">
-            {(data.predictedTokens?.input || 0).toLocaleString()}
+            {(actualTokens?.input ?? data.predictedTokens?.input ?? 0).toLocaleString()}
           </div>
         </div>
         <div className="token-metric-cell">
-          <div className="token-metric-label">Out Tok</div>
+          <div className="token-metric-label">{actualTokens ? 'Actual Out' : 'Forecast Out'}</div>
           <div className="token-metric-val">
-            {(data.predictedTokens?.output || 0).toLocaleString()}
+            {(actualTokens?.output ?? data.predictedTokens?.output ?? 0).toLocaleString()}
           </div>
         </div>
         <div className="token-metric-cell">
@@ -109,6 +122,11 @@ export const CustomTaskNode = memo(({ id, data, selected }) => {
           <div className="token-metric-val" style={{ color: '#06b6d4' }}>
             {currentModelEval.latencySec || data.recommendedAgent?.estimatedLatency || 0}s
           </div>
+          {executionStatus === 'failed' && data.executionError && (
+            <div style={{ color: '#f87171', fontSize: 10, marginTop: 6 }}>
+              {data.executionError}
+            </div>
+          )}
         </div>
       </div>
 
