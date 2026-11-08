@@ -88,6 +88,16 @@ DIETCODE_LOCAL_ROUTING=true
 OLLAMA_API_BASE=http://127.0.0.1:11434
 ```
 
+Execution can also be selected in the dashboard:
+
+- **Hybrid routing**: routine tasks use Ollama; complex tasks use the primary model.
+- **Primary model only**: every task uses the selected primary model.
+- **Ollama only**: every task stays local.
+
+Parent outputs are compacted and duplicate context blocks are removed before
+being sent to downstream tasks. The execution request supports a configurable
+context character budget through `max_context_chars`.
+
 ### Build Production Bundle
 ```powershell
 npm run build

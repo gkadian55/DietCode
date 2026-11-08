@@ -337,6 +337,13 @@ export const useDagStore = create((set, get) => ({
   isLoading: false,
   isExecuting: false,
   executionError: null,
+  executionSettings: {
+    mode: 'hybrid',
+    primary_model: 'gemini-3-8-flash',
+    local_model: 'ollama/qwen2.5-coder:7b',
+    allow_fallback: true,
+    max_context_chars: 12000
+  },
   backendStatus: 'checking',
   isAddModalOpen: false,
   newSubtaskParentId: null,
@@ -346,6 +353,9 @@ export const useDagStore = create((set, get) => ({
   exportError: null,
 
   setBackendStatus: (status) => set({ backendStatus: status }),
+  setExecutionSettings: (settings) => set((state) => ({
+    executionSettings: { ...state.executionSettings, ...settings }
+  })),
   setGoalInput: (goal) => set({ goalInput: goal }),
   setSelectedNode: (node) => set({ selectedNode: node }),
   setAddModalOpen: (open, parentId = null) => set({ isAddModalOpen: open, newSubtaskParentId: parentId }),
@@ -485,7 +495,7 @@ export const useDagStore = create((set, get) => ({
       const res = await fetch(`${API_BASE}/api/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ graph }),
+        body: JSON.stringify({ graph, ...get().executionSettings }),
         signal: controller.signal
       });
       clearTimeout(timeoutId);

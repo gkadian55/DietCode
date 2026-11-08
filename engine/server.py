@@ -16,12 +16,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 try:
-    from executor import DAGExecutor
+    from executor import (
+        DAGExecutor,
+        ExecutionSettings,
+        LOCAL_MODEL,
+        OLLAMA_API_BASE,
+        PRIMARY_MODEL,
+    )
     from exporter import ProjectExporter
     from models.planner import DAGPlanner
     from models.token_forecaster import MODEL_PROFILES, TokenForecaster
 except ImportError:
-    from engine.executor import DAGExecutor
+    from engine.executor import (
+        DAGExecutor,
+        ExecutionSettings,
+        LOCAL_MODEL,
+        OLLAMA_API_BASE,
+        PRIMARY_MODEL,
+    )
     from engine.exporter import ProjectExporter
     from engine.models.planner import DAGPlanner
     from engine.models.token_forecaster import MODEL_PROFILES, TokenForecaster
@@ -65,6 +77,11 @@ class ExecuteRequest(BaseModel):
     max_concurrency: int = 8
     request_timeout: float = 8.0
     max_retries: int = 1
+    mode: str = "hybrid"
+    primary_model: str = PRIMARY_MODEL
+    local_model: str = LOCAL_MODEL
+    allow_fallback: bool = True
+    max_context_chars: int = 12000
 
 
 class ExportRequest(BaseModel):
@@ -88,6 +105,33 @@ def health():
 def get_model_profiles():
     return MODEL_PROFILES
 
+
+@app.get("/api/providers")
+def get_providers():
+    """Return configured provider availability without exposing credentials."""
+    return {
+        "providers": [
+            {
+                "id": "ollama",
+                "available": DAGExecutor._is_ollama_online(),
+                "model": LOCAL_MODEL,
+                "apiBase": OLLAMA_API_BASE,
+            },
+            {
+                "id": "gemini",
+                "available": bool(os.getenv("GEMINI_API_KEY")),
+                "model": PRIMARY_MODEL,
+            },
+            {
+                "id": "openai",
+                "available": bool(os.getenv("OPENAI_API_KEY")),
+            },
+            {
+                "id": "anthropic",
+                "available": bool(os.getenv("ANTHROPIC_API_KEY")),
+            },
+        ]
+    }
 
 @app.post("/api/decompose")
 def decompose_goal(req: DecomposeRequest):
@@ -127,6 +171,13 @@ async def execute_graph(req: ExecuteRequest):
             max_concurrency=req.max_concurrency,
             request_timeout=req.request_timeout,
             max_retries=req.max_retries,
+            settings=ExecutionSettings(
+                mode=req.mode,
+                primary_model=req.primary_model,
+                local_model=req.local_model,
+                allow_fallback=req.allow_fallback,
+                max_context_chars=req.max_context_chars,
+            ),
         )
         results = await executor.execute(req.graph)
         return {

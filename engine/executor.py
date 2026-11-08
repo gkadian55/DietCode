@@ -26,6 +26,8 @@ litellm.suppress_debug_info = True
 litellm.drop_params = True
 from dotenv import load_dotenv
 
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
 # DietCode uses stable IDs for pricing and UI state. LiteLLM requires provider
 # qualified names for providers such as Google and Anthropic.
 PRIMARY_MODEL = os.getenv("DIETCODE_PRIMARY_MODEL", "gemini-3-8-flash")
@@ -64,6 +66,25 @@ class _TaskSpec:
     depends_on: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ExecutionSettings:
+    """User-controlled policy for a single DAG execution."""
+
+    mode: str = "hybrid"
+    primary_model: str = PRIMARY_MODEL
+    local_model: str = LOCAL_MODEL
+    allow_fallback: bool = True
+    max_context_chars: int = 12000
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"selected", "hybrid", "ollama_only"}:
+            raise ValueError("mode must be selected, hybrid, or ollama_only")
+        if not self.primary_model.strip() or not self.local_model.strip():
+            raise ValueError("primary_model and local_model are required")
+        if self.max_context_chars < 1000:
+            raise ValueError("max_context_chars must be at least 1000")
+
+
 class DAGExecutor:
     """Execute a dependency graph through LiteLLM's asynchronous API."""
 
@@ -73,6 +94,7 @@ class DAGExecutor:
         max_concurrency: int = 8,
         request_timeout: float = 10.0,
         max_retries: int = 1,
+        settings: ExecutionSettings | None = None,
     ) -> None:
         if max_concurrency < 1:
             raise ValueError("max_concurrency must be at least 1")
@@ -84,6 +106,7 @@ class DAGExecutor:
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._request_timeout = request_timeout
         self._max_retries = max_retries
+        self._settings = settings or ExecutionSettings()
 
     async def execute(
         self,
@@ -177,13 +200,28 @@ class DAGExecutor:
         spec: _TaskSpec,
         parent_results: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        messages = self._build_messages(spec.prompt, parent_results)
+        messages = self._build_messages(
+            spec.prompt,
+            parent_results,
+            max_context_chars=self._settings.max_context_chars,
+        )
 
         try:
-            routed_model = self._route_model(spec.model, spec.prompt)
+            routed_model = self._route_model(spec.model, spec.prompt, self._settings)
             if not self._has_credentials_for(routed_model):
+                if not self._settings.allow_fallback:
+                    return self._failed_result(
+                        spec,
+                        f"No credentials or service available for {routed_model}",
+                        routed_model=routed_model,
+                    )
                 logger.info("No active API credentials configured for %s; using high-fidelity local simulation", routed_model)
-                return self._simulate_task(spec, parent_results, original_error=f"No API key configured for {spec.model}")
+                return self._simulate_task(
+                    spec,
+                    parent_results,
+                    original_error=f"No API key configured for {spec.model}",
+                    routed_model=routed_model,
+                )
 
             response = await self._complete_with_retries(routed_model, messages)
             text = self._response_text(response)
@@ -204,7 +242,14 @@ class DAGExecutor:
             err_msg = self._exception_text(exc)
             logger.warning("Task %s failed on live model (%s): %s", spec.task_id, spec.model, err_msg)
             # Fall back to high-fidelity simulation so user always gets actionable code deliverables
-            return self._simulate_task(spec, parent_results, original_error=err_msg)
+            if not self._settings.allow_fallback:
+                return self._failed_result(spec, err_msg, routed_model=routed_model)
+            return self._simulate_task(
+                spec,
+                parent_results,
+                original_error=err_msg,
+                routed_model=routed_model,
+            )
 
     async def _complete_with_retries(
         self,
@@ -255,8 +300,19 @@ class DAGExecutor:
         raise last_error
 
     @classmethod
-    def _route_model(cls, requested_model: str, prompt: str) -> str:
+    def _route_model(
+        cls,
+        requested_model: str,
+        prompt: str,
+        settings: ExecutionSettings,
+    ) -> str:
         """Route to requested model if credentials exist, otherwise route intelligently."""
+        if settings.mode == "ollama_only":
+            return settings.local_model
+        if settings.mode == "selected":
+            return settings.primary_model
+        if requested_model.startswith("ollama/"):
+            return requested_model
         litellm_model = LITELLM_MODEL_ALIASES.get(requested_model, requested_model)
         
         # Check credentials for requested model
@@ -273,14 +329,14 @@ class DAGExecutor:
 
         # If user model has no key, check if valid Gemini key is set
         if cls._has_credentials_for("gemini"):
-            return LITELLM_MODEL_ALIASES.get(PRIMARY_MODEL, PRIMARY_MODEL)
+            return LITELLM_MODEL_ALIASES.get(settings.primary_model, settings.primary_model)
 
         # If local routing enabled and Ollama daemon is actively reachable
         if LOCAL_ROUTING_ENABLED and cls._is_ollama_online():
             normalized_prompt = prompt.lower()
             if any(term in normalized_prompt for term in LOCAL_TASK_TERMS):
-                return LOCAL_MODEL
-            return PRIMARY_MODEL
+                return settings.local_model
+            return settings.primary_model
 
         return litellm_model
 
@@ -288,7 +344,8 @@ class DAGExecutor:
         self,
         spec: _TaskSpec,
         parent_results: list[dict[str, Any]],
-        original_error: str = ""
+        original_error: str = "",
+        routed_model: str | None = None,
     ) -> dict[str, Any]:
         """High-fidelity fallback simulation when no live LLM API credentials are configured."""
         prompt_lower = spec.prompt.lower()
@@ -488,7 +545,7 @@ class DAGExecutor:
             "completion_tokens": out_tok,
             "total_tokens": in_tok + out_tok,
             "model": spec.model,
-            "routed_model": f"{spec.model} (Simulated)",
+            "routed_model": routed_model or f"{spec.model} (Simulated)",
             "error": None,
         }
 
@@ -500,26 +557,52 @@ class DAGExecutor:
     def _build_messages(
         prompt: str,
         parent_results: list[dict[str, Any]],
+        *,
+        max_context_chars: int = 12000,
     ) -> list[dict[str, str]]:
         if not parent_results:
             return [{"role": "user", "content": prompt}]
 
-        parent_context = "\n\n".join(
-            f"Parent task {index} output:\n{result.get('text', '')}"
-            if result.get("status") == "completed"
-            else (
-                f"Parent task {index} failed:\n"
-                f"{result.get('error', 'Unknown parent failure')}"
-            )
-            for index, result in enumerate(parent_results, start=1)
-        )
+        blocks = []
+        seen = set()
+        for index, result in enumerate(parent_results, start=1):
+            if result.get("status") == "completed":
+                content = DAGExecutor._compact_parent_output(
+                    str(result.get("text", "")),
+                    max_context_chars,
+                )
+                block = f"Parent task {index} summary:\n{content}"
+            else:
+                block = (
+                    f"Parent task {index} failed:\n"
+                    f"{result.get('error', 'Unknown parent failure')}"
+                )
+            fingerprint = " ".join(block.split())
+            if fingerprint and fingerprint not in seen:
+                blocks.append(block)
+                seen.add(fingerprint)
+
+        parent_context = "\n\n".join(blocks)
         return [{
             "role": "user",
             "content": (
-                "Use the following completed parent-task context when useful.\n\n"
+                "Use only the relevant parent-task context below. It may be a "
+                "compacted excerpt to reduce repeated tokens.\n\n"
                 f"{parent_context}\n\nCurrent task:\n{prompt}"
             ),
         }]
+
+    @staticmethod
+    def _compact_parent_output(text: str, max_chars: int) -> str:
+        if len(text) <= max_chars:
+            return text
+        head_chars = max_chars * 2 // 3
+        tail_chars = max_chars - head_chars
+        return (
+            f"{text[:head_chars].rstrip()}\n"
+            f"... [compacted {len(text) - max_chars} characters] ...\n"
+            f"{text[-tail_chars:].lstrip()}"
+        )
 
     @staticmethod
     def _response_text(response: Any) -> str:
@@ -610,7 +693,12 @@ class DAGExecutor:
             visit(task_id)
 
     @staticmethod
-    def _failed_result(spec: _TaskSpec, error: str) -> dict[str, Any]:
+    def _failed_result(
+        spec: _TaskSpec,
+        error: str,
+        *,
+        routed_model: str | None = None,
+    ) -> dict[str, Any]:
         return {
             "status": "failed",
             "text": "",
@@ -618,7 +706,7 @@ class DAGExecutor:
             "completion_tokens": 0,
             "total_tokens": 0,
             "model": spec.model,
-            "routed_model": None,
+            "routed_model": routed_model,
             "error": error,
         }
 
