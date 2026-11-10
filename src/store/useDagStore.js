@@ -2,6 +2,27 @@ import { create } from 'zustand';
 import { applyNodeChanges, applyEdgeChanges, addEdge } from '@xyflow/react';
 
 const API_BASE = 'http://127.0.0.1:8765';
+const EXECUTION_SETTINGS_KEY = 'dietcode.executionSettings';
+
+const defaultExecutionSettings = {
+  mode: 'hybrid',
+  primary_model: 'gemini-3-5-flash-lite',
+  local_model: 'ollama/qwen2.5-coder:7b',
+  allow_fallback: true,
+  max_context_chars: 12000,
+  request_timeout: 30,
+  max_retries: 1
+};
+
+const loadExecutionSettings = () => {
+  if (typeof window === 'undefined') return defaultExecutionSettings;
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(EXECUTION_SETTINGS_KEY) || '{}');
+    return { ...defaultExecutionSettings, ...stored };
+  } catch {
+    return defaultExecutionSettings;
+  }
+};
 
 export const generateLocalFallbackDag = (goal) => {
   const cleanGoal = (goal || '').trim();
@@ -312,6 +333,21 @@ export const triggerBase64Download = (base64Data, filename) => {
   document.body.removeChild(downloadLink);
 };
 
+const buildTokenSavings = (nodes, actualInput, actualOutput) => {
+  const forecastTotal = nodes.reduce(
+    (sum, node) => sum + (node.data.predictedTokens?.input || 0) + (node.data.predictedTokens?.output || 0),
+    0
+  );
+  const actualTotal = actualInput + actualOutput;
+  const savedTokens = forecastTotal - actualTotal;
+  return {
+    forecastTotal,
+    actualTotal,
+    savedTokens,
+    savingsPercent: forecastTotal > 0 ? Math.round((savedTokens / forecastTotal) * 1000) / 10 : 0
+  };
+};
+
 export const useDagStore = create((set, get) => ({
   nodes: [],
   edges: [],
@@ -330,7 +366,9 @@ export const useDagStore = create((set, get) => ({
       allGeminiCost: 0,
       dietCodeOptimizedCost: 0,
       savingsPercentVsBaseline: 0
-    }
+    },
+    actualTokens: null,
+    tokenSavings: null
   },
   selectedNode: null,
   goalInput: 'Multi-Agent Coding Assistant with Smart LLM Routing and Token Analytics',
@@ -338,12 +376,10 @@ export const useDagStore = create((set, get) => ({
   isExecuting: false,
   executionError: null,
   executionSettings: {
-    mode: 'hybrid',
-    primary_model: 'gemini-3-8-flash',
-    local_model: 'ollama/qwen2.5-coder:7b',
-    allow_fallback: true,
-    max_context_chars: 12000
+    ...loadExecutionSettings()
   },
+  providers: [],
+  providersLoading: false,
   backendStatus: 'checking',
   isAddModalOpen: false,
   newSubtaskParentId: null,
@@ -354,8 +390,30 @@ export const useDagStore = create((set, get) => ({
 
   setBackendStatus: (status) => set({ backendStatus: status }),
   setExecutionSettings: (settings) => set((state) => ({
-    executionSettings: { ...state.executionSettings, ...settings }
+    executionSettings: (() => {
+      const next = { ...state.executionSettings, ...settings };
+      try {
+        window.localStorage.setItem(EXECUTION_SETTINGS_KEY, JSON.stringify(next));
+      } catch {
+        console.warn('[Store] Could not persist execution settings');
+      }
+      return next;
+    })()
   })),
+  refreshProviders: async () => {
+    set({ providersLoading: true });
+    try {
+      const response = await fetch(`${API_BASE}/api/providers`);
+      if (!response.ok) throw new Error(`Provider check failed with HTTP ${response.status}`);
+      const data = await response.json();
+      set({ providers: data.providers || [], providersLoading: false });
+      return data.providers || [];
+    } catch (error) {
+      console.warn('[Store] Provider availability check failed:', error);
+      set({ providers: [], providersLoading: false });
+      return [];
+    }
+  },
   setGoalInput: (goal) => set({ goalInput: goal }),
   setSelectedNode: (node) => set({ selectedNode: node }),
   setAddModalOpen: (open, parentId = null) => set({ isAddModalOpen: open, newSubtaskParentId: parentId }),
@@ -489,7 +547,12 @@ export const useDagStore = create((set, get) => ({
     });
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const { request_timeout: requestTimeout = 30, max_retries: maxRetries = 1 } = get().executionSettings;
+    const clientTimeoutMs = Math.min(
+      300000,
+      Math.max(30000, requestTimeout * 1000 * (maxRetries + 1) * 2)
+    );
+    const timeoutId = setTimeout(() => controller.abort(), clientTimeoutMs);
 
     try {
       const res = await fetch(`${API_BASE}/api/execute`, {
@@ -517,6 +580,9 @@ export const useDagStore = create((set, get) => ({
             executionError: result.error,
             executionOutput: result.text,
             executionModel: result.routed_model || result.model,
+            executionMode: result.execution_mode || 'live',
+            executionErrorCategory: result.error_category,
+            executionFallbackReason: result.fallback_reason,
             actualTokens: {
               input: result.prompt_tokens,
               output: result.completion_tokens,
@@ -531,6 +597,7 @@ export const useDagStore = create((set, get) => ({
 
       const totalActIn = executedNodes.reduce((sum, n) => sum + (n.data.actualTokens?.input || 0), 0);
       const totalActOut = executedNodes.reduce((sum, n) => sum + (n.data.actualTokens?.output || 0), 0);
+      const tokenSavings = buildTokenSavings(executedNodes, totalActIn, totalActOut);
 
       set({
         nodes: executedNodes,
@@ -542,7 +609,8 @@ export const useDagStore = create((set, get) => ({
             input: totalActIn,
             output: totalActOut,
             total: totalActIn + totalActOut
-          }
+          },
+          tokenSavings
         }
       });
       return data;
@@ -587,6 +655,9 @@ export const useDagStore = create((set, get) => ({
             executionError: null,
             executionOutput: simOutput,
             executionModel: node.data.assignedAgent || 'gemini-2.0-flash (simulated)',
+            executionMode: 'simulated',
+            executionErrorCategory: 'provider_error',
+            executionFallbackReason: err instanceof Error ? err.message : 'Remote execution unavailable',
             actualTokens: {
               input: inTok,
               output: outTok,
@@ -599,6 +670,7 @@ export const useDagStore = create((set, get) => ({
       const currentSelectedId = get().selectedNode?.id;
       const totalActIn = simulatedNodes.reduce((sum, n) => sum + (n.data.actualTokens?.input || 0), 0);
       const totalActOut = simulatedNodes.reduce((sum, n) => sum + (n.data.actualTokens?.output || 0), 0);
+      const tokenSavings = buildTokenSavings(simulatedNodes, totalActIn, totalActOut);
 
       set({
         nodes: simulatedNodes,
@@ -611,7 +683,8 @@ export const useDagStore = create((set, get) => ({
             input: totalActIn,
             output: totalActOut,
             total: totalActIn + totalActOut
-          }
+          },
+          tokenSavings
         }
       });
       return { status: 'completed' };
@@ -650,7 +723,7 @@ export const useDagStore = create((set, get) => ({
       const res = await fetch(`${API_BASE}/api/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ graph: singleGraph })
+        body: JSON.stringify({ graph: singleGraph, ...get().executionSettings })
       });
       const resData = await res.json();
       if (!res.ok) {
@@ -666,6 +739,9 @@ export const useDagStore = create((set, get) => ({
             executionError: result.error,
             executionOutput: result.text,
             executionModel: result.routed_model || result.model,
+            executionMode: result.execution_mode || 'live',
+            executionErrorCategory: result.error_category,
+            executionFallbackReason: result.fallback_reason,
             actualTokens: {
               input: result.prompt_tokens,
               output: result.completion_tokens,
