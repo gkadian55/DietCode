@@ -122,6 +122,11 @@ export const CustomTaskNode = memo(({ id, data, selected }) => {
           <div className="token-metric-val" style={{ color: '#06b6d4' }}>
             {currentModelEval.latencySec || data.recommendedAgent?.estimatedLatency || 0}s
           </div>
+          {data.executionMode && (
+            <div style={{ color: data.executionMode === 'simulated' ? '#fbbf24' : '#10b981', fontSize: 9, marginTop: 3 }}>
+              {data.executionMode === 'simulated' ? 'SIMULATED' : data.executionMode.toUpperCase()}
+            </div>
+          )}
           {executionStatus === 'failed' && data.executionError && (
             <div style={{ color: '#f87171', fontSize: 10, marginTop: 6 }}>
               {data.executionError}

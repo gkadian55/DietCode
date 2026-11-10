@@ -5,7 +5,7 @@ import { BarChart3, ChevronDown, ChevronUp, ShieldCheck, Zap } from 'lucide-reac
 export const TokenomicsDashboard = () => {
   const [isExpanded, setIsExpanded] = useState(false);
   const { aggregates } = useDagStore();
-  const { comparison, agentDistribution, nodeCount } = aggregates;
+  const { comparison, agentDistribution, nodeCount, tokenSavings } = aggregates;
 
   return (
     <div style={{
@@ -48,6 +48,19 @@ export const TokenomicsDashboard = () => {
       {isExpanded && (
         <div style={{ padding: '12px 16px 16px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {/* Comparison Cards */}
+          {tokenSavings && (
+            <div style={{ padding: '9px 10px', background: 'rgba(16, 185, 129, 0.1)', borderRadius: 8, border: '1px solid rgba(16, 185, 129, 0.25)' }}>
+              <div style={{ fontSize: 10, color: '#6ee7b7', textTransform: 'uppercase' }}>Actual token savings</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                <span>{tokenSavings.actualTotal.toLocaleString()} actual / {tokenSavings.forecastTotal.toLocaleString()} forecast</span>
+                <strong style={{ color: tokenSavings.savedTokens >= 0 ? '#10b981' : '#f97316' }}>
+                  {tokenSavings.savedTokens >= 0 ? `${tokenSavings.savedTokens.toLocaleString()} saved` : `${Math.abs(tokenSavings.savedTokens).toLocaleString()} over`}
+                </strong>
+              </div>
+              <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 3 }}>{tokenSavings.savingsPercent}% difference from forecast</div>
+            </div>
+          )}
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
             <div style={{ padding: '8px 10px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: 8, border: '1px solid rgba(255, 255, 255, 0.06)' }}>
               <div style={{ fontSize: 10, color: '#94a3b8', textTransform: 'uppercase' }}>All-GPT-4o Total</div>

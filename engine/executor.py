@@ -26,6 +26,8 @@ litellm.suppress_debug_info = True
 litellm.drop_params = True
 from dotenv import load_dotenv
 
+logger = logging.getLogger(__name__)
+
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 # DietCode uses stable IDs for pricing and UI state. LiteLLM requires provider
@@ -38,7 +40,7 @@ LOCAL_ROUTING_ENABLED = os.getenv("DIETCODE_LOCAL_ROUTING", "true").lower() in {
 }
 LOCAL_TASK_TERMS = (
     "boilerplate", "documentation", "document", "format", "lint",
-    "unit test", "tests", "testing", "qa", "frontend", "client ui",
+    "unit test", "test", "tests", "testing", "qa", "frontend", "client ui",
     "dashboard", "simple", "crud", "schema migration",
 )
 PRIMARY_TASK_TERMS = (
@@ -51,6 +53,7 @@ LITELLM_MODEL_ALIASES = {
     "gpt-4o": "openai/gpt-4o",
     "gpt-4o-mini": "openai/gpt-4o-mini",
     "gemini-2-0-flash": "gemini/gemini-2.0-flash",
+    "gemini-3-5-flash-lite": "gemini/gemini-3.5-flash-lite",
     "gemini-3-8-flash": "gemini/gemini-3.8-flash",
     "gemini-1-5-pro": "gemini/gemini-1.5-pro",
 }
@@ -75,6 +78,8 @@ class ExecutionSettings:
     local_model: str = LOCAL_MODEL
     allow_fallback: bool = True
     max_context_chars: int = 12000
+    request_timeout: float = 30.0
+    max_retries: int = 1
 
     def __post_init__(self) -> None:
         if self.mode not in {"selected", "hybrid", "ollama_only"}:
@@ -83,6 +88,10 @@ class ExecutionSettings:
             raise ValueError("primary_model and local_model are required")
         if self.max_context_chars < 1000:
             raise ValueError("max_context_chars must be at least 1000")
+        if self.request_timeout <= 0:
+            raise ValueError("request_timeout must be positive")
+        if self.max_retries < 0:
+            raise ValueError("max_retries cannot be negative")
 
 
 class DAGExecutor:
@@ -188,7 +197,7 @@ class DAGExecutor:
             return cls._is_ollama_online()
         if "gemini" in litellm_model:
             key = os.getenv("GEMINI_API_KEY", "")
-            return bool(key and (key.startswith("AIzaSy") or (len(key) > 25 and not key.startswith("AQ."))))
+            return bool(key.strip())
         if "anthropic" in litellm_model or "claude" in litellm_model:
             return bool(os.getenv("ANTHROPIC_API_KEY"))
         if "openai" in litellm_model or "gpt" in litellm_model:
@@ -210,9 +219,14 @@ class DAGExecutor:
             routed_model = self._route_model(spec.model, spec.prompt, self._settings)
             if not self._has_credentials_for(routed_model):
                 if not self._settings.allow_fallback:
+                    unavailable_reason = (
+                        f"Ollama offline or unavailable for {routed_model}"
+                        if routed_model.startswith("ollama/")
+                        else f"No credentials or service available for {routed_model}"
+                    )
                     return self._failed_result(
                         spec,
-                        f"No credentials or service available for {routed_model}",
+                        unavailable_reason,
                         routed_model=routed_model,
                     )
                 logger.info("No active API credentials configured for %s; using high-fidelity local simulation", routed_model)
@@ -228,12 +242,14 @@ class DAGExecutor:
             prompt_tokens, completion_tokens = self._response_usage(response)
             return {
                 "status": "completed",
+                "execution_mode": "live",
                 "text": text,
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
                 "model": spec.model,
                 "routed_model": routed_model,
+                "error_category": None,
                 "error": None,
             }
         except asyncio.CancelledError:
@@ -327,16 +343,17 @@ class DAGExecutor:
         if ("openai" in litellm_model or "gpt" in litellm_model) and os.getenv("OPENAI_API_KEY"):
             return litellm_model
 
-        # If user model has no key, check if valid Gemini key is set
-        if cls._has_credentials_for("gemini"):
-            return LITELLM_MODEL_ALIASES.get(settings.primary_model, settings.primary_model)
-
         # If local routing enabled and Ollama daemon is actively reachable
         if LOCAL_ROUTING_ENABLED and cls._is_ollama_online():
             normalized_prompt = prompt.lower()
             if any(term in normalized_prompt for term in LOCAL_TASK_TERMS):
                 return settings.local_model
             return settings.primary_model
+
+        # If local routing is unavailable, use the configured primary provider
+        # when its credentials are available.
+        if cls._has_credentials_for(settings.primary_model):
+            return LITELLM_MODEL_ALIASES.get(settings.primary_model, settings.primary_model)
 
         return litellm_model
 
@@ -540,14 +557,32 @@ class DAGExecutor:
 
         return {
             "status": "completed",
+            "execution_mode": "simulated",
             "text": simulated_text,
             "prompt_tokens": in_tok,
             "completion_tokens": out_tok,
             "total_tokens": in_tok + out_tok,
             "model": spec.model,
             "routed_model": routed_model or f"{spec.model} (Simulated)",
+            "error_category": self._classify_error(original_error) if original_error else None,
+            "fallback_reason": original_error or None,
             "error": None,
         }
+
+    @staticmethod
+    def _classify_error(error: str) -> str:
+        normalized = error.lower()
+        if any(term in normalized for term in ("quota", "rate limit", "429", "too many requests")):
+            return "quota_exceeded"
+        if any(term in normalized for term in ("api key", "authentication", "unauthorized", "forbidden", "401", "403")):
+            return "invalid_credentials"
+        if any(term in normalized for term in ("timeout", "timed out")):
+            return "timeout"
+        if any(term in normalized for term in ("model not found", "model_not_found", "404", "not found")):
+            return "model_unavailable"
+        if any(term in normalized for term in ("ollama", "connection refused", "connecterror", "getaddrinfo")):
+            return "ollama_offline"
+        return "provider_error"
 
     @staticmethod
     def _exception_text(exc: Exception) -> str:
@@ -565,24 +600,27 @@ class DAGExecutor:
 
         blocks = []
         seen = set()
-        for index, result in enumerate(parent_results, start=1):
+        for result in parent_results:
             if result.get("status") == "completed":
                 content = DAGExecutor._compact_parent_output(
                     str(result.get("text", "")),
                     max_context_chars,
                 )
-                block = f"Parent task {index} summary:\n{content}"
+                block_body = f"summary:\n{content}"
             else:
-                block = (
-                    f"Parent task {index} failed:\n"
+                block_body = (
+                    "failed:\n"
                     f"{result.get('error', 'Unknown parent failure')}"
                 )
-            fingerprint = " ".join(block.split())
+            fingerprint = " ".join(block_body.split())
             if fingerprint and fingerprint not in seen:
-                blocks.append(block)
+                blocks.append(block_body)
                 seen.add(fingerprint)
 
-        parent_context = "\n\n".join(blocks)
+        parent_context = "\n\n".join(
+            f"Parent task {index} {block}"
+            for index, block in enumerate(blocks, start=1)
+        )
         return [{
             "role": "user",
             "content": (
@@ -701,12 +739,14 @@ class DAGExecutor:
     ) -> dict[str, Any]:
         return {
             "status": "failed",
+            "execution_mode": "failed",
             "text": "",
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
             "model": spec.model,
             "routed_model": routed_model,
+            "error_category": DAGExecutor._classify_error(error),
             "error": error,
         }
 
