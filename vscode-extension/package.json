@@ -1,0 +1,39 @@
+{
+  "name": "dietcode-vscode",
+  "displayName": "DietCode",
+  "description": "Send editor tasks to the local DietCode execution engine.",
+  "version": "0.1.0",
+  "publisher": "dietcode",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:dietcode.sendSelection",
+    "onCommand:dietcode.openDashboard"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "dietcode.sendSelection",
+        "title": "DietCode: Send Selection"
+      },
+      {
+        "command": "dietcode.openDashboard",
+        "title": "DietCode: Open Dashboard"
+      }
+    ],
+    "configuration": {
+      "properties": {
+        "dietcode.backendUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8765",
+          "description": "URL of the local DietCode engine."
+        }
+      }
+    }
+  }
+}

@@ -98,6 +98,30 @@ Parent outputs are compacted and duplicate context blocks are removed before
 being sent to downstream tasks. The execution request supports a configurable
 context character budget through `max_context_chars`.
 
+The dashboard also exposes per-run request timeout, retry count, and fallback
+controls. Fallback can return a local simulation result when a provider is
+unavailable; disabling it reports the provider failure instead.
+
+Execution settings are available from the dashboard's **Execution settings**
+panel. Results are labeled **LIVE** or **SIMULATED**, provider failures include
+a category such as quota, credentials, timeout, model availability, or Ollama
+offline, and the tokenomics panel compares actual usage with the forecast.
+
+## VS Code integration
+
+The initial VS Code extension is in `vscode-extension`. It provides commands
+to send the current editor selection to the local execution engine and open the
+DietCode dashboard. Set `dietcode.backendUrl` in VS Code when the backend is
+running on a non-default address.
+
+## Local Gemini simulator
+
+Run `python simulator.py` to execute the bundled four-task DAG through one
+Gemini model while preserving dependency ordering and parent-output context.
+The simulator reads `GEMINI_API_KEY` from `.env` and ignores each task's
+assigned model. Set `GEMINI_SIMULATOR_MODEL` or pass `--model` to select a
+different Gemini model.
+
 ### Build Production Bundle
 ```powershell
 npm run build
