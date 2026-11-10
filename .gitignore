@@ -74,4 +74,6 @@ Thumbs.db
 # Project Generated Exports
 exports/
 
+# Local SQLite development database
+dietcode.db
 

@@ -107,6 +107,53 @@ panel. Results are labeled **LIVE** or **SIMULATED**, provider failures include
 a category such as quota, credentials, timeout, model availability, or Ollama
 offline, and the tokenomics panel compares actual usage with the forecast.
 
+## Local SQLite ledger
+
+DietCode now includes a local SQLite ledger for development. The database is
+created as `dietcode.db` in the project root when the FastAPI server starts.
+It is ignored by Git and is not a production billing system yet.
+
+The current schema is:
+
+```text
+users
+  id, email, credit_balance, created_at
+
+execution_logs
+  id, user_id, task_name, model_used, input_tokens, output_tokens,
+  cost_deducted, status, created_at
+```
+
+One user can have multiple execution logs. The `user_id` field on
+`POST /api/execute` is optional so existing executions continue to work. When
+provided, each completed or failed task is recorded with its token usage and
+status. `cost_deducted` remains zero until the billing phase is implemented.
+
+### Ledger API
+
+Create a development user:
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8765/api/users `
+  -ContentType 'application/json' `
+  -Body '{"email":"user@example.com","credit_balance":10.0}'
+```
+
+Read a balance:
+
+```text
+GET /api/users/{user_id}/balance
+```
+
+Read execution history:
+
+```text
+GET /api/users/{user_id}/executions
+```
+
+The current ledger has no authentication, payments, or automatic credit
+deduction. Those are planned for the billing phase.
+
 ## VS Code integration
 
 The initial VS Code extension is in `vscode-extension`. It provides commands

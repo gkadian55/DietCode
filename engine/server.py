@@ -1,5 +1,6 @@
 import os
 import sys
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -13,9 +14,11 @@ for p in [str(ENGINE_DIR), str(ROOT_DIR)]:
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 
 try:
+    from database import SessionLocal, initialize_database
     from executor import (
         DAGExecutor,
         ExecutionSettings,
@@ -24,9 +27,11 @@ try:
         PRIMARY_MODEL,
     )
     from exporter import ProjectExporter
+    from models.billing import ExecutionLog, User
     from models.planner import DAGPlanner
     from models.token_forecaster import MODEL_PROFILES, TokenForecaster
 except ImportError:
+    from engine.database import SessionLocal, initialize_database
     from engine.executor import (
         DAGExecutor,
         ExecutionSettings,
@@ -35,6 +40,7 @@ except ImportError:
         PRIMARY_MODEL,
     )
     from engine.exporter import ProjectExporter
+    from engine.models.billing import ExecutionLog, User
     from engine.models.planner import DAGPlanner
     from engine.models.token_forecaster import MODEL_PROFILES, TokenForecaster
 
@@ -53,6 +59,7 @@ app.add_middleware(
 print("[Server] Initializing DietCode ML Engine & Self-Trained Regressors...")
 forecaster = TokenForecaster()
 planner = DAGPlanner(forecaster)
+initialize_database()
 print("[Server] ML Engine ready!")
 
 
@@ -72,11 +79,17 @@ class ReplanRequest(BaseModel):
     edges: list[dict[str, Any]]
 
 
+class CreateUserRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    credit_balance: float = Field(default=10.0, ge=0)
+
+
 class ExecuteRequest(BaseModel):
     graph: dict[str, dict[str, Any]]
-    max_concurrency: int = 8
-    request_timeout: float = 8.0
-    max_retries: int = 1
+    user_id: int | None = Field(default=None, ge=1)
+    max_concurrency: int = Field(default=8, ge=1, le=32)
+    request_timeout: float = Field(default=30.0, gt=0, le=300)
+    max_retries: int = Field(default=1, ge=0, le=5)
     mode: str = "hybrid"
     primary_model: str = PRIMARY_MODEL
     local_model: str = LOCAL_MODEL
@@ -133,6 +146,80 @@ def get_providers():
         ]
     }
 
+
+@app.post("/api/users", status_code=201)
+def create_user(req: CreateUserRequest):
+    """Create a local development user with an initial credit balance."""
+    email = req.email.strip().lower()
+    if "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid email is required")
+
+    with SessionLocal() as session:
+        user = User(email=email, credit_balance=req.credit_balance)
+        session.add(user)
+        try:
+            session.commit()
+        except IntegrityError as err:
+            session.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="A user with this email already exists",
+            ) from err
+        session.refresh(user)
+        return {
+            "id": user.id,
+            "email": user.email,
+            "credit_balance": user.credit_balance,
+            "created_at": user.created_at,
+        }
+
+
+@app.get("/api/users/{user_id}/balance")
+def get_user_balance(user_id: int):
+    """Return a user's current local credit balance."""
+    with SessionLocal() as session:
+        user = session.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        return {
+            "user_id": user.id,
+            "email": user.email,
+            "credit_balance": user.credit_balance,
+        }
+
+
+@app.get("/api/users/{user_id}/executions")
+def get_user_executions(user_id: int):
+    """Return execution history for a local development user."""
+    with SessionLocal() as session:
+        user = session.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        logs = (
+            session.query(ExecutionLog)
+            .filter(ExecutionLog.user_id == user_id)
+            .order_by(ExecutionLog.created_at.desc(), ExecutionLog.id.desc())
+            .all()
+        )
+        return {
+            "user_id": user_id,
+            "executions": [
+                {
+                    "id": log.id,
+                    "task_name": log.task_name,
+                    "model_used": log.model_used,
+                    "input_tokens": log.input_tokens,
+                    "output_tokens": log.output_tokens,
+                    "cost_deducted": log.cost_deducted,
+                    "status": log.status,
+                    "created_at": log.created_at,
+                }
+                for log in logs
+            ],
+        }
+
+
 @app.post("/api/decompose")
 def decompose_goal(req: DecomposeRequest):
     if not req.goal or not req.goal.strip():
@@ -167,6 +254,11 @@ def replan_graph(req: ReplanRequest):
 async def execute_graph(req: ExecuteRequest):
     """Execute the frontend DAG and return generated text plus token telemetry."""
     try:
+        if req.user_id is not None:
+            with SessionLocal() as session:
+                if session.get(User, req.user_id) is None:
+                    raise HTTPException(status_code=404, detail="User not found")
+
         executor = DAGExecutor(
             max_concurrency=req.max_concurrency,
             request_timeout=req.request_timeout,
@@ -177,11 +269,39 @@ async def execute_graph(req: ExecuteRequest):
                 local_model=req.local_model,
                 allow_fallback=req.allow_fallback,
                 max_context_chars=req.max_context_chars,
+                request_timeout=req.request_timeout,
+                max_retries=req.max_retries,
             ),
         )
         results = await executor.execute(req.graph)
+        if req.user_id is not None:
+            with SessionLocal() as session:
+                for task_id, result in results.items():
+                    session.add(
+                        ExecutionLog(
+                            user_id=req.user_id,
+                            task_name=task_id,
+                            model_used=(
+                                result.get("routed_model")
+                                or result.get("model")
+                                or "unknown"
+                            ),
+                            input_tokens=int(result.get("prompt_tokens") or 0),
+                            output_tokens=int(result.get("completion_tokens") or 0),
+                            cost_deducted=Decimal("0"),
+                            status=str(result.get("status") or "unknown"),
+                        )
+                    )
+                session.commit()
+        task_statuses = [result.get("status") for result in results.values()]
+        if all(status == "completed" for status in task_statuses):
+            execution_status = "completed"
+        elif all(status == "failed" for status in task_statuses):
+            execution_status = "failed"
+        else:
+            execution_status = "partial_failure"
         return {
-            "status": "completed",
+            "status": execution_status,
             "results": results,
         }
     except (TypeError, ValueError) as err:
