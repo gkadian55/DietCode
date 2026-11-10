@@ -7,7 +7,11 @@ let mainWindow = null;
 let pythonProcess = null;
 const BACKEND_PORT = 8765;
 
-function startPythonBackend() {
+async function startPythonBackend() {
+  if (await checkBackendHealth(1, 100)) {
+    console.log('[Main] Reusing the existing Python backend.');
+    return;
+  }
   const isWindows = process.platform === 'win32';
   const projectRoot = path.join(__dirname, '..');
   const venvPython = isWindows 
@@ -22,7 +26,6 @@ function startPythonBackend() {
 
   console.log(`[Main] Starting local Python ML backend using: ${executable}`);
 
-  // Spawn python backend process
   try {
     pythonProcess = spawn(executable, args, {
       cwd: projectRoot,
@@ -41,6 +44,7 @@ function startPythonBackend() {
     pythonProcess.on('close', (code) => {
       console.log(`[Python Engine] Process exited with code ${code}`);
     });
+    await checkBackendHealth();
   } catch (err) {
     console.error('[Main] Failed to spawn python backend via uv:', err);
   }
@@ -146,7 +150,7 @@ ipcMain.handle('get-backend-status', async () => {
 });
 
 app.whenReady().then(async () => {
-  startPythonBackend();
+  await startPythonBackend();
   createWindow();
 
   app.on('activate', () => {
