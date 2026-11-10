@@ -19,6 +19,45 @@ import {
   RotateCcw
 } from 'lucide-react';
 
+const IMAGE_PATTERN = /!\[([^\]]*)\]\((https?:\/\/[^)\s]+|data:image\/[^)\s]+)\)|(https?:\/\/[^\s"'<>]+\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s"'<>]*)?)/gi;
+
+const renderOutput = (output) => {
+  const parts = [];
+  let cursor = 0;
+  let match;
+  IMAGE_PATTERN.lastIndex = 0;
+
+  while ((match = IMAGE_PATTERN.exec(output)) !== null) {
+    if (match.index > cursor) {
+      parts.push(
+        <pre className="output-text-block" key={`text-${cursor}`}>
+          {output.slice(cursor, match.index)}
+        </pre>
+      );
+    }
+
+    const alt = match[1] || 'Generated image';
+    const source = match[2] || match[3];
+    parts.push(
+      <figure className="output-image-block" key={`image-${match.index}`}>
+        <img src={source} alt={alt} loading="lazy" />
+        <figcaption>{alt}</figcaption>
+      </figure>
+    );
+    cursor = match.index + match[0].length;
+  }
+
+  if (cursor < output.length) {
+    parts.push(
+      <pre className="output-text-block" key={`text-${cursor}`}>
+        {output.slice(cursor)}
+      </pre>
+    );
+  }
+
+  return parts;
+};
+
 export const NodeInspector = () => {
   const { 
     selectedNode, 
@@ -44,7 +83,10 @@ export const NodeInspector = () => {
       
       // Auto-switch to output tab if node just completed execution
       if (selectedNode.data.executionOutput && selectedNode.data.executionStatus === 'completed') {
-        // If user already on output or hasn't switched, keep activeTab smooth
+        setActiveTab('output');
+      }
+      if (selectedNode.data.executionStatus === 'failed') {
+        setActiveTab('output');
       }
     }
   }, [selectedNode]);
@@ -325,6 +367,11 @@ export const NodeInspector = () => {
                     Model: <span style={{ color: '#fff', fontFamily: 'var(--font-mono)' }}>
                       {data.executionModel || data.assignedAgent || data.recommendedAgent?.name || 'Auto-Routed'}
                     </span>
+                    {data.executionMode && (
+                      <span style={{ color: data.executionMode === 'simulated' ? '#fbbf24' : '#10b981', marginLeft: 8 }}>
+                        {data.executionMode === 'simulated' ? 'SIMULATED' : 'LIVE'}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -396,6 +443,16 @@ export const NodeInspector = () => {
               <p style={{ fontSize: 11.5, color: '#fda4af', margin: '6px 0', fontFamily: 'var(--font-mono)', lineHeight: 1.5 }}>
                 {data.executionError}
               </p>
+              {data.executionErrorCategory && (
+                <div style={{ color: '#fbbf24', fontSize: 11 }}>
+                  Category: {data.executionErrorCategory.replaceAll('_', ' ')}
+                </div>
+              )}
+              {data.executionFallbackReason && (
+                <div style={{ color: '#cbd5e1', fontSize: 11, marginTop: 5 }}>
+                  Fallback reason: {data.executionFallbackReason}
+                </div>
+              )}
               <div className="execution-error-tip">
                 💡 <strong>Troubleshooting Tip:</strong> Make sure API keys are present in <code>.env</code> (e.g. <code>GEMINI_API_KEY</code>). For offline local execution, DietCode automatically uses simulation fallbacks or Ollama.
               </div>
@@ -432,9 +489,9 @@ export const NodeInspector = () => {
               </div>
 
               <div className="code-viewer-wrapper">
-                <pre className="code-viewer-pre">
-                  <code>{data.executionOutput}</code>
-                </pre>
+                <div className="output-content">
+                  {renderOutput(data.executionOutput)}
+                </div>
               </div>
             </div>
           ) : !isRunning && !isFailed ? (

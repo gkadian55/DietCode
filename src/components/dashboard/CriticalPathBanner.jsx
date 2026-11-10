@@ -12,9 +12,7 @@ export const CriticalPathBanner = () => {
     exportLoading, 
     isLoading, 
     isExecuting, 
-    executionError,
-    executionSettings,
-    setExecutionSettings
+    executionError
   } = useDagStore();
   const { 
     nodeCount, 
@@ -81,47 +79,6 @@ export const CriticalPathBanner = () => {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <select
-          value={executionSettings.mode}
-          onChange={(event) => setExecutionSettings({ mode: event.target.value })}
-          disabled={isExecuting}
-          title="Choose how tasks are routed"
-          style={{
-            height: 30,
-            padding: '0 8px',
-            color: '#cbd5e1',
-            background: 'rgba(255, 255, 255, 0.05)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            borderRadius: 6,
-            fontSize: 11
-          }}
-        >
-          <option value="hybrid">Hybrid routing</option>
-          <option value="selected">Primary model only</option>
-          <option value="ollama_only">Ollama only</option>
-        </select>
-        {executionSettings.mode !== 'ollama_only' && (
-          <select
-            value={executionSettings.primary_model}
-            onChange={(event) => setExecutionSettings({ primary_model: event.target.value })}
-            disabled={isExecuting}
-            title="Select the primary cloud model"
-            style={{
-              height: 30,
-              maxWidth: 130,
-              padding: '0 8px',
-              color: '#cbd5e1',
-              background: 'rgba(255, 255, 255, 0.05)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              borderRadius: 6,
-              fontSize: 11
-            }}
-          >
-            <option value="gemini-3-8-flash">Gemini 3.8 Flash</option>
-            <option value="gpt-4o">GPT-4o</option>
-            <option value="claude-3-5-sonnet">Claude Sonnet</option>
-          </select>
-        )}
         <button
           className="btn btn-primary btn-sm"
           onClick={executeGraph}
