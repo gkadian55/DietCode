@@ -547,7 +547,8 @@ export const useDagStore = create((set, get) => ({
     });
 
     const controller = new AbortController();
-    const { request_timeout: requestTimeout = 30, max_retries: maxRetries = 1 } = get().executionSettings;
+    const executionSettings = { ...get().executionSettings };
+    const { request_timeout: requestTimeout = 30, max_retries: maxRetries = 1 } = executionSettings;
     const clientTimeoutMs = Math.min(
       300000,
       Math.max(30000, requestTimeout * 1000 * (maxRetries + 1) * 2)
@@ -558,7 +559,7 @@ export const useDagStore = create((set, get) => ({
       const res = await fetch(`${API_BASE}/api/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ graph, ...get().executionSettings }),
+        body: JSON.stringify({ graph, ...executionSettings }),
         signal: controller.signal
       });
       clearTimeout(timeoutId);
@@ -616,7 +617,39 @@ export const useDagStore = create((set, get) => ({
       return data;
     } catch (err) {
       clearTimeout(timeoutId);
-      console.warn('[Store] Remote execution failed or timed out, applying simulation deliverables:', err);
+      const message = err instanceof Error ? err.message : 'Remote execution failed';
+      console.warn('[Store] Remote execution failed or timed out:', err);
+      if (!executionSettings.allow_fallback) {
+        const failedNodes = get().nodes.map((node) => {
+          const executionTarget = executionSettings.mode === 'selected'
+            ? executionSettings.primary_model
+            : executionSettings.mode === 'ollama_only'
+              ? executionSettings.local_model
+              : node.data.executionModel || node.data.assignedAgent;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              executionStatus: 'failed',
+              executionError: message,
+              executionModel: executionTarget,
+              executionMode: 'failed',
+              executionErrorCategory: 'connection_error'
+            }
+          };
+        });
+        const currentSelectedId = get().selectedNode?.id;
+        set({
+          nodes: failedNodes,
+          selectedNode: currentSelectedId
+            ? failedNodes.find((node) => node.id === currentSelectedId) || get().selectedNode
+            : get().selectedNode,
+          isExecuting: false,
+          executionError: message
+        });
+        return { status: 'failed', error: message };
+      }
+      console.warn('[Store] Applying client simulation fallback.');
       const simulatedNodes = get().nodes.map((node, idx) => {
         const title = node.data.title || `Task ${idx + 1}`;
         const isChat = (node.data.title + ' ' + (node.data.description || '')).toLowerCase().includes('chat') ||
@@ -654,10 +687,14 @@ export const useDagStore = create((set, get) => ({
             executionStatus: 'completed',
             executionError: null,
             executionOutput: simOutput,
-            executionModel: node.data.assignedAgent || 'gemini-2.0-flash (simulated)',
+            executionModel: executionSettings.mode === 'selected'
+              ? executionSettings.primary_model
+              : executionSettings.mode === 'ollama_only'
+                ? executionSettings.local_model
+                : node.data.assignedAgent || 'gemini-2.0-flash (simulated)',
             executionMode: 'simulated',
             executionErrorCategory: 'provider_error',
-            executionFallbackReason: err instanceof Error ? err.message : 'Remote execution unavailable',
+            executionFallbackReason: message,
             actualTokens: {
               input: inTok,
               output: outTok,

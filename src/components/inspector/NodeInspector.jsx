@@ -65,7 +65,8 @@ export const NodeInspector = () => {
     updateNodeData, 
     removeNode, 
     setAddModalOpen,
-    executeNode
+    executeNode,
+    executionSettings
   } = useDagStore();
   
   const [activeTab, setActiveTab] = useState('config'); // 'config' | 'output'
@@ -94,6 +95,12 @@ export const NodeInspector = () => {
   if (!selectedNode) return null;
 
   const data = selectedNode.data;
+  const executionTarget = data.executionModel
+    || (executionSettings.mode === 'selected'
+      ? executionSettings.primary_model
+      : executionSettings.mode === 'ollama_only'
+        ? executionSettings.local_model
+        : null);
   const evals = data.modelEvaluations || {};
   const executionStatus = data.executionStatus || 'pending';
   const hasOutput = Boolean(data.executionOutput);
@@ -365,11 +372,11 @@ export const NodeInspector = () => {
                   </div>
                   <div style={{ fontSize: 10.5, color: '#94a3b8', marginTop: 1 }}>
                     Model: <span style={{ color: '#fff', fontFamily: 'var(--font-mono)' }}>
-                      {data.executionModel || data.assignedAgent || data.recommendedAgent?.name || 'Auto-Routed'}
+                      {executionTarget || data.assignedAgent || data.recommendedAgent?.name || 'Auto-Routed'}
                     </span>
                     {data.executionMode && (
-                      <span style={{ color: data.executionMode === 'simulated' ? '#fbbf24' : '#10b981', marginLeft: 8 }}>
-                        {data.executionMode === 'simulated' ? 'SIMULATED' : 'LIVE'}
+                      <span style={{ color: data.executionMode === 'simulated' ? '#fbbf24' : data.executionMode === 'failed' ? '#f87171' : '#10b981', marginLeft: 8 }}>
+                        {data.executionMode === 'simulated' ? 'SIMULATED' : data.executionMode === 'failed' ? 'FAILED' : 'LIVE'}
                       </span>
                     )}
                   </div>

@@ -24,6 +24,11 @@ async function startPythonBackend() {
   const executable = fs.existsSync(venvPython) ? venvPython : uvPath;
   const args = fs.existsSync(venvPython) ? [serverScript] : ['run', '--python', '3.11', serverScript];
 
+  if (!fs.existsSync(executable)) {
+    console.error(`[Main] Python backend runtime not found: ${executable}`);
+    return false;
+  }
+
   console.log(`[Main] Starting local Python ML backend using: ${executable}`);
 
   try {
@@ -44,9 +49,10 @@ async function startPythonBackend() {
     pythonProcess.on('close', (code) => {
       console.log(`[Python Engine] Process exited with code ${code}`);
     });
-    await checkBackendHealth();
+    return await checkBackendHealth();
   } catch (err) {
     console.error('[Main] Failed to spawn python backend via uv:', err);
+    return false;
   }
 }
 

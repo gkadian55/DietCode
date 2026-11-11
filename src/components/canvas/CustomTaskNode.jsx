@@ -4,12 +4,28 @@ import { useDagStore } from '../../store/useDagStore';
 import { Plus, Trash2 } from 'lucide-react';
 
 export const CustomTaskNode = memo(({ id, data, selected }) => {
-  const { aggregates, setSelectedNode, setAddModalOpen, removeNode } = useDagStore();
+  const { aggregates, executionSettings, setSelectedNode, setAddModalOpen, removeNode } = useDagStore();
   const isCriticalPath = aggregates.criticalPath?.includes(id);
 
   const assignedAgentId = data.assignedAgent || data.recommendedAgent?.id;
   const currentModelEval = data.modelEvaluations?.[assignedAgentId] || {};
-  const agentColor = data.recommendedAgent?.color || '#6366f1';
+  const executionTarget = data.executionModel
+    || (executionSettings.mode === 'selected'
+      ? executionSettings.primary_model
+      : executionSettings.mode === 'ollama_only'
+        ? executionSettings.local_model
+        : null);
+  const displayModel = executionTarget
+    ? executionTarget.replace(/^ollama\//, 'Ollama: ')
+    : currentModelEval.name || data.recommendedAgent?.name || 'Agent';
+  const displayLabel = executionTarget
+    ? (data.executionModel ? 'Actual execution model' : 'Execution target')
+    : (data.assignedAgent && data.assignedAgent !== data.recommendedAgent?.id
+      ? 'Human Override'
+      : 'Planner recommendation');
+  const agentColor = executionTarget?.startsWith('ollama/')
+    ? '#10b981'
+    : data.recommendedAgent?.color || '#6366f1';
   const executionStatus = data.executionStatus || 'pending';
   const actualTokens = data.actualTokens;
   const statusColor = {
@@ -89,12 +105,10 @@ export const CustomTaskNode = memo(({ id, data, selected }) => {
           <div className="agent-avatar-dot" style={{ background: agentColor }} />
           <div>
             <div className="agent-badge-name" style={{ color: agentColor }}>
-              {currentModelEval.name || data.recommendedAgent?.name || 'Agent'}
+              {displayModel}
             </div>
             <div style={{ fontSize: 9.5, color: '#94a3b8' }}>
-              {data.assignedAgent && data.assignedAgent !== data.recommendedAgent?.id 
-                ? 'Human Override' 
-                : 'Optimal Pareto Match'}
+              {displayLabel}
             </div>
           </div>
         </div>
@@ -123,8 +137,8 @@ export const CustomTaskNode = memo(({ id, data, selected }) => {
             {currentModelEval.latencySec || data.recommendedAgent?.estimatedLatency || 0}s
           </div>
           {data.executionMode && (
-            <div style={{ color: data.executionMode === 'simulated' ? '#fbbf24' : '#10b981', fontSize: 9, marginTop: 3 }}>
-              {data.executionMode === 'simulated' ? 'SIMULATED' : data.executionMode.toUpperCase()}
+            <div style={{ color: data.executionMode === 'simulated' ? '#fbbf24' : data.executionMode === 'failed' ? '#f87171' : '#10b981', fontSize: 9, marginTop: 3 }}>
+              {data.executionMode === 'simulated' ? 'SIMULATED' : data.executionMode === 'failed' ? 'FAILED' : data.executionMode.toUpperCase()}
             </div>
           )}
           {executionStatus === 'failed' && data.executionError && (

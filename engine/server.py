@@ -304,6 +304,8 @@ async def execute_graph(req: ExecuteRequest):
             "status": execution_status,
             "results": results,
         }
+    except HTTPException:
+        raise
     except (TypeError, ValueError) as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
     except Exception as err:
