@@ -86,7 +86,7 @@ export const NodeInspector = () => {
       if (selectedNode.data.executionOutput && selectedNode.data.executionStatus === 'completed') {
         setActiveTab('output');
       }
-      if (selectedNode.data.executionStatus === 'failed') {
+      if (['failed', 'insufficient_funds'].includes(selectedNode.data.executionStatus)) {
         setActiveTab('output');
       }
     }
@@ -105,6 +105,7 @@ export const NodeInspector = () => {
   const executionStatus = data.executionStatus || 'pending';
   const hasOutput = Boolean(data.executionOutput);
   const isFailed = executionStatus === 'failed';
+  const isInsufficientFunds = executionStatus === 'insufficient_funds';
   const isRunning = executionStatus === 'running' || isLocalExecuting;
 
   const handleTitleBlur = () => {
@@ -361,6 +362,7 @@ export const NodeInspector = () => {
                 {executionStatus === 'completed' && <CheckCircle2 size={16} color="#10b981" />}
                 {isRunning && <Loader2 size={16} color="#06b6d4" className="spin-animation" />}
                 {isFailed && <AlertTriangle size={16} color="#f43f5e" />}
+                {isInsufficientFunds && <AlertTriangle size={16} color="#f59e0b" />}
                 {executionStatus === 'pending' && <Clock size={16} color="#94a3b8" />}
                 
                 <div>
@@ -368,6 +370,7 @@ export const NodeInspector = () => {
                     {executionStatus === 'completed' && 'Execution Completed'}
                     {isRunning && 'Executing Task...'}
                     {isFailed && 'Execution Failed'}
+                    {isInsufficientFunds && 'Execution Blocked: Insufficient Funds'}
                     {executionStatus === 'pending' && 'Ready for Execution'}
                   </div>
                   <div style={{ fontSize: 10.5, color: '#94a3b8', marginTop: 1 }}>
@@ -376,7 +379,13 @@ export const NodeInspector = () => {
                     </span>
                     {data.executionMode && (
                       <span style={{ color: data.executionMode === 'simulated' ? '#fbbf24' : data.executionMode === 'failed' ? '#f87171' : '#10b981', marginLeft: 8 }}>
-                        {data.executionMode === 'simulated' ? 'SIMULATED' : data.executionMode === 'failed' ? 'FAILED' : 'LIVE'}
+                        {data.executionMode === 'simulated'
+                          ? 'SIMULATED'
+                          : data.executionMode === 'failed'
+                            ? 'FAILED'
+                            : data.executionMode === 'blocked'
+                              ? 'BLOCKED'
+                              : 'LIVE'}
                       </span>
                     )}
                   </div>
@@ -441,11 +450,11 @@ export const NodeInspector = () => {
           )}
 
           {/* Failure Alert Banner */}
-          {isFailed && data.executionError && (
+          {(isFailed || isInsufficientFunds) && data.executionError && (
             <div className="execution-error-callout">
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#f43f5e', fontWeight: 600, fontSize: 12 }}>
                 <AlertTriangle size={14} />
-                <span>Execution Diagnostic Details</span>
+                <span>{isInsufficientFunds ? 'Billing Protection' : 'Execution Diagnostic Details'}</span>
               </div>
               <p style={{ fontSize: 11.5, color: '#fda4af', margin: '6px 0', fontFamily: 'var(--font-mono)', lineHeight: 1.5 }}>
                 {data.executionError}

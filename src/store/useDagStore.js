@@ -581,7 +581,8 @@ export const useDagStore = create((set, get) => ({
             executionError: result.error,
             executionOutput: result.text,
             executionModel: result.routed_model || result.model,
-            executionMode: result.execution_mode || 'live',
+            executionMode: result.execution_mode
+              || (result.status === 'insufficient_funds' ? 'blocked' : 'live'),
             executionErrorCategory: result.error_category,
             executionFallbackReason: result.fallback_reason,
             actualTokens: {
@@ -776,7 +777,8 @@ export const useDagStore = create((set, get) => ({
             executionError: result.error,
             executionOutput: result.text,
             executionModel: result.routed_model || result.model,
-            executionMode: result.execution_mode || 'live',
+            executionMode: result.execution_mode
+              || (result.status === 'insufficient_funds' ? 'blocked' : 'live'),
             executionErrorCategory: result.error_category,
             executionFallbackReason: result.fallback_reason,
             actualTokens: {

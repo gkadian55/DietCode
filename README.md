@@ -103,15 +103,21 @@ controls. Fallback can return a local simulation result when a provider is
 unavailable; disabling it reports the provider failure instead.
 
 Execution settings are available from the dashboard's **Execution settings**
-panel. Results are labeled **LIVE** or **SIMULATED**, provider failures include
+panel. results are labeled **LIVE**, **SIMULATED**, or **BLOCKED**, provider failures include
 a category such as quota, credentials, timeout, model availability, or Ollama
 offline, and the tokenomics panel compares actual usage with the forecast.
 
-## Local SQLite ledger
+## Neon PostgreSQL ledger
 
-DietCode now includes a local SQLite ledger for development. The database is
-created as `dietcode.db` in the project root when the FastAPI server starts.
-It is ignored by Git and is not a production billing system yet.
+DietCode uses Neon-hosted PostgreSQL for the billing ledger. Add the connection
+string from the Neon dashboard to the project `.env` file:
+
+```env
+DATABASE_URL=postgresql://user:password@ep-example.neon.tech/dietcode?sslmode=require
+```
+
+The application automatically uses the secure `psycopg` PostgreSQL driver. Do
+not commit `.env` or expose the connection string.
 
 The current schema is:
 
@@ -126,8 +132,23 @@ execution_logs
 
 One user can have multiple execution logs. The `user_id` field on
 `POST /api/execute` is optional so existing executions continue to work. When
-provided, each completed or failed task is recorded with its token usage and
-status. `cost_deducted` remains zero until the billing phase is implemented.
+provided, each task is recorded with its token usage, status, and measured
+provider cost. Successful cloud-model tasks deduct their actual token cost
+from the user's USD balance; Ollama tasks have zero provider cost.
+The `cost_deducted` value in each execution log always matches the amount
+actually deducted from the balance, including capped overrun settlements.
+
+Before paid provider calls, DietCode forecasts the graph cost. If the estimate
+exceeds the available balance, every task is returned with
+`status: insufficient_funds`, no provider call is made, and the balance is
+unchanged. The dashboard displays these tasks as **BLOCKED**. Failed provider
+tasks do not incur a charge.
+
+The estimate is reserved with an atomic database update before execution, so
+concurrent requests cannot spend the same balance. Unused reserved funds are
+refunded after measured usage is known. If actual usage exceeds the estimate,
+DietCode charges only the reserved amount and reports a billing warning rather
+than allowing the balance to become negative.
 
 ### Ledger API
 
@@ -151,8 +172,44 @@ Read execution history:
 GET /api/users/{user_id}/executions
 ```
 
-The current ledger has no authentication, payments, or automatic credit
-deduction. Those are planned for the billing phase.
+The current ledger has no authentication or live payment activation. Stripe
+test checkout, signed webhooks, and idempotent top-ups are implemented; live
+payment activation and production account verification remain future work.
+
+### Stripe test payments
+
+Stripe test checkout is available through `POST /api/billing/checkout`:
+
+```json
+{
+  "user_id": 1,
+  "amount_inr": 500
+}
+```
+
+The endpoint creates a one-time INR Checkout session. With
+`INR_PER_USD=100`, a ₹500 payment credits `$5.00`. The server stores the
+conversion rate on the payment transaction.
+
+Add these values to the local `.env` file:
+
+```env
+STRIPE_PUBLISHABLE_KEY=pk_test_...
+STRIPE_SECRET_KEY=sk_test_...
+INR_PER_USD=100
+```
+
+Never expose or commit the secret key. To test crediting locally, install the
+Stripe CLI, sign in, and forward test webhooks:
+
+```powershell
+stripe listen --forward-to http://127.0.0.1:8765/api/billing/stripe/webhook
+```
+
+Copy the `whsec_...` value printed by the CLI into `.env` as
+`STRIPE_WEBHOOK_SECRET`, then restart the backend. Only a verified
+`checkout.session.completed` event with `payment_status=paid` credits the
+Neon balance. Duplicate webhook deliveries are ignored.
 
 ## VS Code integration
 

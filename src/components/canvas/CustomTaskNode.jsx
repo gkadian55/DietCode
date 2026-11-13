@@ -32,7 +32,8 @@ export const CustomTaskNode = memo(({ id, data, selected }) => {
     queued: '#f59e0b',
     running: '#06b6d4',
     completed: '#10b981',
-    failed: '#f43f5e'
+    failed: '#f43f5e',
+    insufficient_funds: '#f59e0b'
   }[executionStatus] || '#94a3b8';
 
   const handleClick = (e) => {
@@ -138,11 +139,17 @@ export const CustomTaskNode = memo(({ id, data, selected }) => {
           </div>
           {data.executionMode && (
             <div style={{ color: data.executionMode === 'simulated' ? '#fbbf24' : data.executionMode === 'failed' ? '#f87171' : '#10b981', fontSize: 9, marginTop: 3 }}>
-              {data.executionMode === 'simulated' ? 'SIMULATED' : data.executionMode === 'failed' ? 'FAILED' : data.executionMode.toUpperCase()}
+              {data.executionMode === 'simulated'
+                ? 'SIMULATED'
+                : data.executionMode === 'failed'
+                  ? 'FAILED'
+                  : data.executionMode === 'blocked'
+                    ? 'BLOCKED'
+                    : data.executionMode.toUpperCase()}
             </div>
           )}
-          {executionStatus === 'failed' && data.executionError && (
-            <div style={{ color: '#f87171', fontSize: 10, marginTop: 6 }}>
+          {(executionStatus === 'failed' || executionStatus === 'insufficient_funds') && data.executionError && (
+            <div style={{ color: executionStatus === 'insufficient_funds' ? '#fbbf24' : '#f87171', fontSize: 10, marginTop: 6 }}>
               {data.executionError}
             </div>
           )}

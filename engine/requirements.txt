@@ -7,3 +7,5 @@ networkx>=3.3
 litellm>=1.50.0
 python-dotenv>=1.0.1
 sqlalchemy>=2.0.0
+psycopg[binary]>=3.2.0
+stripe>=11.0.0
