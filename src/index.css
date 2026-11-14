@@ -96,6 +96,124 @@ body {
   -webkit-app-region: no-drag;
 }
 
+.billing-control {
+  position: relative;
+}
+
+.billing-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: var(--radius-sm);
+  background: rgba(16, 185, 129, 0.1);
+  color: #a7f3d0;
+  cursor: pointer;
+  font: 500 11px var(--font-sans);
+}
+
+.billing-trigger:hover {
+  background: rgba(16, 185, 129, 0.18);
+}
+
+.billing-popover {
+  position: absolute;
+  top: 38px;
+  right: 0;
+  width: 260px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: #111827;
+  box-shadow: var(--shadow-card);
+  z-index: 100;
+}
+
+.billing-popover-header,
+.billing-balance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.billing-popover-header {
+  margin-bottom: 14px;
+}
+
+.billing-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.billing-subtitle,
+.billing-note {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.billing-label {
+  display: block;
+  margin: 10px 0 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.billing-input {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
+  font: 12px var(--font-sans);
+  outline: none;
+}
+
+.billing-input:focus {
+  border-color: var(--accent-indigo);
+}
+
+.billing-balance-row {
+  margin: 14px 0 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.billing-balance-row strong {
+  margin-left: auto;
+  color: #a7f3d0;
+  font: 700 14px var(--font-mono);
+}
+
+.billing-refresh {
+  display: inline-flex;
+  padding: 3px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.billing-checkout {
+  width: 100%;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.billing-error {
+  margin-top: 8px;
+  color: #fda4af;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.billing-note {
+  margin-top: 10px;
+  line-height: 1.4;
+}
+
 .logo-badge {
   display: flex;
   align-items: center;

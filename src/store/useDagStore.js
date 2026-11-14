@@ -3,6 +3,7 @@ import { applyNodeChanges, applyEdgeChanges, addEdge } from '@xyflow/react';
 
 const API_BASE = 'http://127.0.0.1:8765';
 const EXECUTION_SETTINGS_KEY = 'dietcode.executionSettings';
+const BILLING_USER_ID_KEY = 'dietcode.billingUserId';
 
 const defaultExecutionSettings = {
   mode: 'hybrid',
@@ -22,6 +23,11 @@ const loadExecutionSettings = () => {
   } catch {
     return defaultExecutionSettings;
   }
+};
+
+const loadBillingUserId = () => {
+  if (typeof window === 'undefined') return '';
+  return window.localStorage.getItem(BILLING_USER_ID_KEY) || '';
 };
 
 export const generateLocalFallbackDag = (goal) => {
@@ -387,6 +393,10 @@ export const useDagStore = create((set, get) => ({
   exportLoading: false,
   exportResult: null,
   exportError: null,
+  billingUserId: loadBillingUserId(),
+  billingBalance: null,
+  billingLoading: false,
+  billingError: null,
 
   setBackendStatus: (status) => set({ backendStatus: status }),
   setExecutionSettings: (settings) => set((state) => ({
@@ -415,6 +425,58 @@ export const useDagStore = create((set, get) => ({
     }
   },
   setGoalInput: (goal) => set({ goalInput: goal }),
+  setBillingUserId: (userId) => {
+    const normalized = String(userId || '').trim();
+    try {
+      window.localStorage.setItem(BILLING_USER_ID_KEY, normalized);
+    } catch {
+      console.warn('[Store] Could not persist billing user ID');
+    }
+    set({ billingUserId: normalized, billingError: null });
+  },
+  refreshBillingBalance: async () => {
+    const userId = get().billingUserId;
+    if (!userId) {
+      set({ billingBalance: null, billingError: 'Enter your development user ID first.' });
+      return null;
+    }
+    set({ billingLoading: true, billingError: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/users/${encodeURIComponent(userId)}/balance`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Balance lookup failed (${response.status})`);
+      set({ billingBalance: data.credit_balance, billingLoading: false });
+      return data;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Balance lookup failed';
+      set({ billingBalance: null, billingLoading: false, billingError: message });
+      return null;
+    }
+  },
+  createBillingCheckout: async (amountInr = 500) => {
+    const userId = get().billingUserId;
+    if (!userId) {
+      set({ billingError: 'Enter your development user ID first.' });
+      return false;
+    }
+    set({ billingLoading: true, billingError: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/billing/checkout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: Number(userId), amount_inr: amountInr })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Checkout failed (${response.status})`);
+      window.open(data.checkout_url, '_blank', 'noopener,noreferrer');
+      set({ billingLoading: false });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Checkout failed';
+      set({ billingLoading: false, billingError: message });
+      return false;
+    }
+  },
   setSelectedNode: (node) => set({ selectedNode: node }),
   setAddModalOpen: (open, parentId = null) => set({ isAddModalOpen: open, newSubtaskParentId: parentId }),
   setExportModalOpen: (open) => set({ isExportModalOpen: open, exportError: null }),

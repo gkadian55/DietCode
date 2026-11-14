@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useDagStore } from '../../store/useDagStore';
+import { BillingControl } from '../billing/BillingControl';
 import { 
   GitFork, 
   Search, 
@@ -127,6 +128,7 @@ export const Header = () => {
 
       {/* Right: Window Controls */}
       <div className="header-right">
+        <BillingControl />
         <div className="window-controls">
           <button className="window-btn" onClick={handleMinimize} title="Minimize">
             <Minimize2 size={13} />
