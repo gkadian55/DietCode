@@ -1,6 +1,7 @@
 import React from 'react';
 import { useDagStore } from '../../store/useDagStore';
 import { Layers, Clock, TrendingDown, Plus, Sparkles, Play, Download } from 'lucide-react';
+import { ExecutionProgress } from './ExecutionProgress';
 
 export const CriticalPathBanner = () => {
   const { 
@@ -116,6 +117,7 @@ export const CriticalPathBanner = () => {
           Add Custom Node
         </button>
       </div>
+      <ExecutionProgress />
       {executionError && (
         <div style={{ color: '#f87171', fontSize: 11, marginTop: 6 }}>
           Execution error: {executionError}

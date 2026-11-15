@@ -3,6 +3,7 @@ import { Header } from './components/header/Header';
 import { CriticalPathBanner } from './components/dashboard/CriticalPathBanner';
 import { ExecutionSettingsPanel } from './components/dashboard/ExecutionSettingsPanel';
 import { TokenomicsDashboard } from './components/dashboard/TokenomicsDashboard';
+import { CompletionCelebration } from './components/dashboard/CompletionCelebration';
 import { AgentCanvas } from './components/canvas/AgentCanvas';
 import { NodeInspector } from './components/inspector/NodeInspector';
 import { AddNodeModal } from './components/modal/AddNodeModal';
@@ -44,6 +45,7 @@ export function App() {
       </div>
       <AddNodeModal />
       <ExportModal />
+      <CompletionCelebration />
     </div>
   );
 }

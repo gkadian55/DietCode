@@ -380,6 +380,8 @@ export const useDagStore = create((set, get) => ({
   goalInput: 'Multi-Agent Coding Assistant with Smart LLM Routing and Token Analytics',
   isLoading: false,
   isExecuting: false,
+  executionProgress: { completed: 0, total: 0 },
+  showCompletionCelebration: false,
   executionError: null,
   executionSettings: {
     ...loadExecutionSettings()
@@ -604,6 +606,8 @@ export const useDagStore = create((set, get) => ({
     set({
       isExecuting: true,
       executionError: null,
+      executionProgress: { completed: 0, total: nodes.length },
+      showCompletionCelebration: false,
       nodes: queuedNodes,
       selectedNode: curSelectedId ? queuedNodes.find(n => n.id === curSelectedId) || get().selectedNode : get().selectedNode
     });
@@ -662,11 +666,17 @@ export const useDagStore = create((set, get) => ({
       const totalActIn = executedNodes.reduce((sum, n) => sum + (n.data.actualTokens?.input || 0), 0);
       const totalActOut = executedNodes.reduce((sum, n) => sum + (n.data.actualTokens?.output || 0), 0);
       const tokenSavings = buildTokenSavings(executedNodes, totalActIn, totalActOut);
+      const completedCount = executedNodes.filter(
+        (node) => node.data.executionStatus === 'completed'
+      ).length;
+      const allTasksCompleted = completedCount === nodes.length;
 
       set({
         nodes: executedNodes,
         selectedNode: updatedSelectedNode || get().selectedNode,
         isExecuting: false,
+        executionProgress: { completed: completedCount, total: nodes.length },
+        showCompletionCelebration: allTasksCompleted,
         aggregates: {
           ...get().aggregates,
           actualTokens: {
@@ -677,6 +687,9 @@ export const useDagStore = create((set, get) => ({
           tokenSavings
         }
       });
+      if (allTasksCompleted) {
+        setTimeout(() => set({ showCompletionCelebration: false }), 2500);
+      }
       return data;
     } catch (err) {
       clearTimeout(timeoutId);
@@ -708,6 +721,11 @@ export const useDagStore = create((set, get) => ({
             ? failedNodes.find((node) => node.id === currentSelectedId) || get().selectedNode
             : get().selectedNode,
           isExecuting: false,
+          executionProgress: {
+            completed: failedNodes.filter((node) => node.data.executionStatus === 'completed').length,
+            total: nodes.length
+          },
+          showCompletionCelebration: false,
           executionError: message
         });
         return { status: 'failed', error: message };
@@ -771,11 +789,16 @@ export const useDagStore = create((set, get) => ({
       const totalActIn = simulatedNodes.reduce((sum, n) => sum + (n.data.actualTokens?.input || 0), 0);
       const totalActOut = simulatedNodes.reduce((sum, n) => sum + (n.data.actualTokens?.output || 0), 0);
       const tokenSavings = buildTokenSavings(simulatedNodes, totalActIn, totalActOut);
+      const completedCount = simulatedNodes.filter(
+        (node) => node.data.executionStatus === 'completed'
+      ).length;
 
       set({
         nodes: simulatedNodes,
         selectedNode: currentSelectedId ? simulatedNodes.find(n => n.id === currentSelectedId) || get().selectedNode : get().selectedNode,
         isExecuting: false,
+        executionProgress: { completed: completedCount, total: nodes.length },
+        showCompletionCelebration: completedCount === nodes.length,
         executionError: null,
         aggregates: {
           ...get().aggregates,
@@ -787,6 +810,9 @@ export const useDagStore = create((set, get) => ({
           tokenSavings
         }
       });
+      if (completedCount === nodes.length) {
+        setTimeout(() => set({ showCompletionCelebration: false }), 2500);
+      }
       return { status: 'completed' };
     }
   },
