@@ -96,6 +96,34 @@ body {
   -webkit-app-region: no-drag;
 }
 
+.auth-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.auth-button {
+  padding: 6px 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+  cursor: pointer;
+  font: 500 11px var(--font-sans);
+}
+
+.auth-button-secondary {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.auth-button-primary {
+  border-color: rgba(129, 140, 248, 0.5);
+  background: rgba(99, 102, 241, 0.8);
+}
+
+.auth-button:hover {
+  filter: brightness(1.15);
+}
+
 .billing-control {
   position: relative;
 }

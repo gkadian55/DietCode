@@ -1,4 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import {
+  Show,
+  SignInButton,
+  SignUpButton,
+  UserButton
+} from '@clerk/react';
 import { useDagStore } from '../../store/useDagStore';
 import { BillingControl } from '../billing/BillingControl';
 import { 
@@ -128,6 +134,23 @@ export const Header = () => {
 
       {/* Right: Window Controls */}
       <div className="header-right">
+        <div className="auth-controls">
+          <Show when="signed-out">
+            <SignInButton mode="modal">
+              <button type="button" className="auth-button auth-button-secondary">
+                Sign in
+              </button>
+            </SignInButton>
+            <SignUpButton mode="modal">
+              <button type="button" className="auth-button auth-button-primary">
+                Sign up
+              </button>
+            </SignUpButton>
+          </Show>
+          <Show when="signed-in">
+            <UserButton />
+          </Show>
+        </div>
         <BillingControl />
         <div className="window-controls">
           <button className="window-btn" onClick={handleMinimize} title="Minimize">
