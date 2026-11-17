@@ -3,7 +3,7 @@
 import os
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 
@@ -52,3 +52,13 @@ def initialize_database() -> None:
     except ImportError:
         from models import billing  # noqa: F401
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE users ADD COLUMN IF NOT EXISTS clerk_user_id VARCHAR(255)")
+        )
+        connection.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_clerk_user_id "
+                "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
+            )
+        )

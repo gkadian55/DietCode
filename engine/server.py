@@ -12,13 +12,14 @@ for p in [str(ENGINE_DIR), str(ROOT_DIR)]:
         sys.path.insert(0, p)
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi import Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 import stripe
 from stripe._util import convert_to_dict
+from clerk_backend_api import Clerk
+from clerk_backend_api.security import TokenVerificationError, VerifyTokenOptions, verify_token
 
 try:
     from database import SessionLocal, initialize_database
@@ -76,6 +77,108 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+def get_current_clerk_user(
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Verify a Clerk session token and return its claims."""
+    secret_key = os.getenv("CLERK_SECRET_KEY", "").strip()
+    if not secret_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Clerk authentication is not configured",
+        )
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+
+    try:
+        claims = verify_token(
+            token.strip(),
+            VerifyTokenOptions(secret_key=secret_key),
+        )
+    except TokenVerificationError as err:
+        print(f"[Auth] Clerk token rejected: {err.reason.value[0]}")
+        raise HTTPException(status_code=401, detail="Invalid authentication token") from err
+
+    clerk_user_id = claims.get("sub")
+    if not isinstance(clerk_user_id, str) or not clerk_user_id:
+        raise HTTPException(status_code=401, detail="Authentication token has no user")
+    return claims
+
+
+def _clerk_user_email(clerk_user: Any, clerk_user_id: str) -> str:
+    email_addresses = getattr(clerk_user, "email_addresses", []) or []
+    primary_id = getattr(clerk_user, "primary_email_address_id", None)
+    for address in email_addresses:
+        address_id = getattr(address, "id", None)
+        email = getattr(address, "email_address", None)
+        if email and (primary_id is None or address_id == primary_id):
+            return email.strip().lower()
+    for address in email_addresses:
+        email = getattr(address, "email_address", None)
+        if email:
+            return email.strip().lower()
+    return f"{clerk_user_id}@clerk.local"
+
+
+def get_current_user(
+    claims: dict[str, Any] = Depends(get_current_clerk_user),
+) -> dict[str, Any]:
+    """Resolve the verified Clerk identity to a Neon billing account."""
+    clerk_user_id = claims["sub"]
+    with SessionLocal() as session:
+        user = (
+            session.query(User)
+            .filter(User.clerk_user_id == clerk_user_id)
+            .one_or_none()
+        )
+        if user is None:
+            try:
+                clerk_user = Clerk(
+                    bearer_auth=os.getenv("CLERK_SECRET_KEY", "").strip()
+                ).users.get(user_id=clerk_user_id)
+            except Exception as err:
+                raise HTTPException(
+                    status_code=502,
+                    detail="Could not retrieve the authenticated Clerk user",
+                ) from err
+
+            email = _clerk_user_email(clerk_user, clerk_user_id)
+            user = session.query(User).filter(User.email == email).one_or_none()
+            if user is not None:
+                if user.clerk_user_id and user.clerk_user_id != clerk_user_id:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="This email is already linked to another account",
+                    )
+                user.clerk_user_id = clerk_user_id
+            else:
+                user = User(
+                    email=email,
+                    clerk_user_id=clerk_user_id,
+                    credit_balance=Decimal("0"),
+                )
+                session.add(user)
+            try:
+                session.commit()
+            except IntegrityError as err:
+                session.rollback()
+                raise HTTPException(
+                    status_code=409,
+                    detail="Could not link the Clerk account",
+                ) from err
+            session.refresh(user)
+        return {
+            "id": user.id,
+            "clerk_user_id": user.clerk_user_id,
+            "email": user.email,
+        }
+
+
 # Initialize ML models
 print("[Server] Initializing DietCode ML Engine & Self-Trained Regressors...")
 forecaster = TokenForecaster()
@@ -107,7 +210,6 @@ class CreateUserRequest(BaseModel):
 
 class ExecuteRequest(BaseModel):
     graph: dict[str, dict[str, Any]]
-    user_id: int | None = Field(default=None, ge=1)
     max_concurrency: int = Field(default=8, ge=1, le=32)
     request_timeout: float = Field(default=30.0, gt=0, le=300)
     max_retries: int = Field(default=1, ge=0, le=5)
@@ -126,7 +228,6 @@ class ExportRequest(BaseModel):
 
 
 class CreateCheckoutRequest(BaseModel):
-    user_id: int = Field(ge=1)
     amount_inr: Decimal = Field(default=Decimal("500.00"), gt=0, le=Decimal("100000.00"))
 
 
@@ -174,7 +275,10 @@ def get_providers():
 
 
 @app.post("/api/users", status_code=201)
-def create_user(req: CreateUserRequest):
+def create_user(
+    req: CreateUserRequest,
+    _current_user: dict[str, Any] = Depends(get_current_user),
+):
     """Create a local development user with an initial credit balance."""
     email = req.email.strip().lower()
     if "@" not in email:
@@ -200,9 +304,10 @@ def create_user(req: CreateUserRequest):
         }
 
 
-@app.get("/api/users/{user_id}/balance")
-def get_user_balance(user_id: int):
-    """Return a user's current local credit balance."""
+@app.get("/api/billing/balance")
+def get_user_balance(current_user: dict[str, Any] = Depends(get_current_user)):
+    """Return the authenticated user's current credit balance."""
+    user_id = current_user["id"]
     with SessionLocal() as session:
         user = session.get(User, user_id)
         if user is None:
@@ -214,9 +319,10 @@ def get_user_balance(user_id: int):
         }
 
 
-@app.get("/api/users/{user_id}/executions")
-def get_user_executions(user_id: int):
-    """Return execution history for a local development user."""
+@app.get("/api/billing/executions")
+def get_user_executions(current_user: dict[str, Any] = Depends(get_current_user)):
+    """Return execution history for the authenticated user."""
+    user_id = current_user["id"]
     with SessionLocal() as session:
         user = session.get(User, user_id)
         if user is None:
@@ -260,11 +366,14 @@ def _stripe_config() -> tuple[str, Decimal]:
 
 
 @app.post("/api/billing/checkout")
-def create_checkout_session(req: CreateCheckoutRequest):
+def create_checkout_session(
+    req: CreateCheckoutRequest,
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
     """Create a Stripe test/live Checkout session for a credit top-up."""
     secret_key, inr_per_usd = _stripe_config()
     with SessionLocal() as session:
-                user = session.get(User, req.user_id)
+                user = session.get(User, current_user["id"])
                 if user is None:
                     raise HTTPException(status_code=404, detail="User not found")
 
@@ -286,7 +395,7 @@ def create_checkout_session(req: CreateCheckoutRequest):
                         "quantity": 1,
                     }],
                     metadata={
-                        "user_id": str(req.user_id),
+                        "user_id": str(current_user["id"]),
                         "amount_inr": str(amount_inr),
                         "credit_usd": str(credit_usd),
                         "inr_per_usd": str(inr_per_usd),
@@ -448,18 +557,22 @@ def replan_graph(req: ReplanRequest):
 
 
 @app.post("/api/execute")
-async def execute_graph(req: ExecuteRequest):
+async def execute_graph(
+    req: ExecuteRequest,
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
     """Execute the frontend DAG and return generated text plus token telemetry."""
     try:
+        user_id = current_user["id"]
         estimated_cost = Decimal("0")
         funds_reserved = False
-        if req.user_id is not None:
+        if user_id is not None:
             with SessionLocal() as session:
-                user = session.get(User, req.user_id)
+                user = session.get(User, user_id)
                 if user is None:
                     raise HTTPException(status_code=404, detail="User not found")
                 estimated_cost = _estimate_graph_cost(req)
-                funds_reserved = reserve_balance(session, req.user_id, estimated_cost)
+                funds_reserved = reserve_balance(session, user_id, estimated_cost)
                 if not funds_reserved:
                     session.rollback()
                     session.refresh(user)
@@ -509,9 +622,9 @@ async def execute_graph(req: ExecuteRequest):
         results = await executor.execute(req.graph)
         total_cost = Decimal("0")
         remaining_balance = None
-        if req.user_id is not None:
+        if user_id is not None:
             with SessionLocal() as session:
-                user = session.get(User, req.user_id)
+                user = session.get(User, user_id)
                 if user is None:
                     raise HTTPException(status_code=404, detail="User not found")
                 task_costs = {}
@@ -533,7 +646,7 @@ async def execute_graph(req: ExecuteRequest):
                     log_entries.append((task_id, result))
                 fully_charged, charged_cost = settle_reserved_balance(
                     session,
-                    req.user_id,
+                    user_id,
                     estimated_cost if funds_reserved else Decimal("0"),
                     total_cost,
                 )
@@ -542,7 +655,7 @@ async def execute_graph(req: ExecuteRequest):
                 for task_id, result in log_entries:
                     session.add(
                         ExecutionLog(
-                            user_id=req.user_id,
+                            user_id=user_id,
                             task_name=task_id,
                             model_used=(
                                 result.get("routed_model")
@@ -571,7 +684,7 @@ async def execute_graph(req: ExecuteRequest):
             "billing": {
                 "cost_deducted": total_cost,
                 "remaining_balance": remaining_balance,
-                "estimated_cost": estimated_cost if req.user_id is not None else None,
+                "estimated_cost": estimated_cost,
                 **(
                     {
                         "billing_warning": (
@@ -579,19 +692,19 @@ async def execute_graph(req: ExecuteRequest):
                             "the reserved amount was charged."
                         )
                     }
-                    if req.user_id is not None and not fully_charged
+                    if not fully_charged
                     else {}
                 ),
-            } if req.user_id is not None else None,
+            },
         }
     except HTTPException:
-        _refund_execution_reservation(req.user_id, estimated_cost if funds_reserved else Decimal("0"))
+        _refund_execution_reservation(user_id, estimated_cost if funds_reserved else Decimal("0"))
         raise
     except (TypeError, ValueError) as err:
-        _refund_execution_reservation(req.user_id, estimated_cost if funds_reserved else Decimal("0"))
+        _refund_execution_reservation(user_id, estimated_cost if funds_reserved else Decimal("0"))
         raise HTTPException(status_code=400, detail=str(err)) from err
     except Exception as err:
-        _refund_execution_reservation(req.user_id, estimated_cost if funds_reserved else Decimal("0"))
+        _refund_execution_reservation(user_id, estimated_cost if funds_reserved else Decimal("0"))
         raise HTTPException(status_code=500, detail="DAG execution failed") from err
 
 

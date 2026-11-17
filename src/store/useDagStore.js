@@ -1,9 +1,9 @@
 import { create } from 'zustand';
 import { applyNodeChanges, applyEdgeChanges, addEdge } from '@xyflow/react';
+import { apiFetch } from '../utils/apiFetch';
 
 const API_BASE = 'http://127.0.0.1:8765';
 const EXECUTION_SETTINGS_KEY = 'dietcode.executionSettings';
-const BILLING_USER_ID_KEY = 'dietcode.billingUserId';
 
 const defaultExecutionSettings = {
   mode: 'hybrid',
@@ -23,11 +23,6 @@ const loadExecutionSettings = () => {
   } catch {
     return defaultExecutionSettings;
   }
-};
-
-const loadBillingUserId = () => {
-  if (typeof window === 'undefined') return '';
-  return window.localStorage.getItem(BILLING_USER_ID_KEY) || '';
 };
 
 export const generateLocalFallbackDag = (goal) => {
@@ -395,7 +390,6 @@ export const useDagStore = create((set, get) => ({
   exportLoading: false,
   exportResult: null,
   exportError: null,
-  billingUserId: loadBillingUserId(),
   billingBalance: null,
   billingLoading: false,
   billingError: null,
@@ -427,24 +421,10 @@ export const useDagStore = create((set, get) => ({
     }
   },
   setGoalInput: (goal) => set({ goalInput: goal }),
-  setBillingUserId: (userId) => {
-    const normalized = String(userId || '').trim();
-    try {
-      window.localStorage.setItem(BILLING_USER_ID_KEY, normalized);
-    } catch {
-      console.warn('[Store] Could not persist billing user ID');
-    }
-    set({ billingUserId: normalized, billingError: null });
-  },
   refreshBillingBalance: async () => {
-    const userId = get().billingUserId;
-    if (!userId) {
-      set({ billingBalance: null, billingError: 'Enter your development user ID first.' });
-      return null;
-    }
     set({ billingLoading: true, billingError: null });
     try {
-      const response = await fetch(`${API_BASE}/api/users/${encodeURIComponent(userId)}/balance`);
+      const response = await apiFetch(`${API_BASE}/api/billing/balance`);
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || `Balance lookup failed (${response.status})`);
       set({ billingBalance: data.credit_balance, billingLoading: false });
@@ -456,17 +436,12 @@ export const useDagStore = create((set, get) => ({
     }
   },
   createBillingCheckout: async (amountInr = 500) => {
-    const userId = get().billingUserId;
-    if (!userId) {
-      set({ billingError: 'Enter your development user ID first.' });
-      return false;
-    }
     set({ billingLoading: true, billingError: null });
     try {
-      const response = await fetch(`${API_BASE}/api/billing/checkout`, {
+      const response = await apiFetch(`${API_BASE}/api/billing/checkout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: Number(userId), amount_inr: amountInr })
+        body: JSON.stringify({ amount_inr: amountInr })
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || `Checkout failed (${response.status})`);
@@ -622,7 +597,7 @@ export const useDagStore = create((set, get) => ({
     const timeoutId = setTimeout(() => controller.abort(), clientTimeoutMs);
 
     try {
-      const res = await fetch(`${API_BASE}/api/execute`, {
+      const res = await apiFetch(`${API_BASE}/api/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ graph, ...executionSettings }),
@@ -846,7 +821,7 @@ export const useDagStore = create((set, get) => ({
     });
 
     try {
-      const res = await fetch(`${API_BASE}/api/execute`, {
+      const res = await apiFetch(`${API_BASE}/api/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ graph: singleGraph, ...get().executionSettings })

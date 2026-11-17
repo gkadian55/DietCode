@@ -125,6 +125,12 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    clerk_user_id: Mapped[str | None] = mapped_column(
+        String(255),
+        unique=True,
+        nullable=True,
+        index=True,
+    )
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
     credit_balance: Mapped[Decimal] = mapped_column(
         Numeric(12, 6),

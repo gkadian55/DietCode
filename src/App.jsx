@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { useAuth } from '@clerk/react';
 import { Header } from './components/header/Header';
 import { CriticalPathBanner } from './components/dashboard/CriticalPathBanner';
 import { ExecutionSettingsPanel } from './components/dashboard/ExecutionSettingsPanel';
@@ -9,9 +10,15 @@ import { NodeInspector } from './components/inspector/NodeInspector';
 import { AddNodeModal } from './components/modal/AddNodeModal';
 import { ExportModal } from './components/modal/ExportModal';
 import { useDagStore } from './store/useDagStore';
+import { setAuthTokenGetter } from './utils/apiFetch';
 
 export function App() {
   const { checkHealth, decomposeGoal, refreshProviders, goalInput } = useDagStore();
+  const { getToken } = useAuth();
+
+  useEffect(() => {
+    setAuthTokenGetter(getToken);
+  }, [getToken]);
 
   useEffect(() => {
     // Initial health check and graph initialization
