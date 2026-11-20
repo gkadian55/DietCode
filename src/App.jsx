@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { useAuth } from '@clerk/react';
 import { Header } from './components/header/Header';
+import { DemoModeBanner } from './components/auth/DemoModeBanner';
 import { CriticalPathBanner } from './components/dashboard/CriticalPathBanner';
 import { ExecutionSettingsPanel } from './components/dashboard/ExecutionSettingsPanel';
 import { TokenomicsDashboard } from './components/dashboard/TokenomicsDashboard';
@@ -14,11 +15,12 @@ import { setAuthTokenGetter } from './utils/apiFetch';
 
 export function App() {
   const { checkHealth, decomposeGoal, refreshProviders, goalInput } = useDagStore();
-  const { getToken } = useAuth();
+  const { getToken, isSignedIn } = useAuth();
 
   useEffect(() => {
     setAuthTokenGetter(getToken);
-  }, [getToken]);
+    useDagStore.getState().setAuthenticationState(Boolean(isSignedIn));
+  }, [getToken, isSignedIn]);
 
   useEffect(() => {
     // Initial health check and graph initialization
@@ -41,6 +43,7 @@ export function App() {
   return (
     <div className="app-container">
       <Header />
+      <DemoModeBanner />
       <div className="workspace-layout">
         <div className="canvas-area">
           <CriticalPathBanner />

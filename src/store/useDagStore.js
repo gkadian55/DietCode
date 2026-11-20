@@ -393,8 +393,10 @@ export const useDagStore = create((set, get) => ({
   billingBalance: null,
   billingLoading: false,
   billingError: null,
+  isAuthenticated: false,
 
   setBackendStatus: (status) => set({ backendStatus: status }),
+  setAuthenticationState: (isAuthenticated) => set({ isAuthenticated }),
   setExecutionSettings: (settings) => set((state) => ({
     executionSettings: (() => {
       const next = { ...state.executionSettings, ...settings };
@@ -670,7 +672,7 @@ export const useDagStore = create((set, get) => ({
       clearTimeout(timeoutId);
       const message = err instanceof Error ? err.message : 'Remote execution failed';
       console.warn('[Store] Remote execution failed or timed out:', err);
-      if (!executionSettings.allow_fallback) {
+      if (!executionSettings.allow_fallback && get().isAuthenticated) {
         const failedNodes = get().nodes.map((node) => {
           const executionTarget = executionSettings.mode === 'selected'
             ? executionSettings.primary_model

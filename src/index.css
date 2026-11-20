@@ -96,6 +96,37 @@ body {
   -webkit-app-region: no-drag;
 }
 
+.demo-mode-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 16px;
+  border-bottom: 1px solid rgba(245, 158, 11, 0.25);
+  background: rgba(245, 158, 11, 0.08);
+  color: #fde68a;
+  font-size: 11px;
+}
+
+.demo-mode-banner strong {
+  color: #fbbf24;
+}
+
+.demo-mode-signup {
+  padding: 4px 9px;
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  border-radius: var(--radius-sm);
+  background: rgba(245, 158, 11, 0.16);
+  color: #fef3c7;
+  cursor: pointer;
+  font: 600 10px var(--font-sans);
+}
+
+.demo-mode-signup:hover {
+  background: rgba(245, 158, 11, 0.28);
+}
+
 .auth-controls {
   display: flex;
   align-items: center;
