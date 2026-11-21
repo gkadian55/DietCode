@@ -8,8 +8,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 try:
     from ..database import Base
+    from ..openrouter_catalog import catalog
 except ImportError:
     from database import Base
+    from openrouter_catalog import catalog
 
 
 MODEL_PRICING_PER_MILLION = {
@@ -30,22 +32,25 @@ def calculate_task_cost(
 ) -> Decimal:
     """Calculate USD cost from actual token usage.
 
-    Ollama is local and has no provider token charge. The Gemini 3.5 Flash
-    Lite rate uses DietCode's current Gemini benchmark rate until a provider
-    specific billing catalog is configured.
+    Ollama is local and has no provider token charge. Cloud prices come from
+    the synchronized OpenRouter catalog when available.
     """
     normalized_model = model.lower().strip()
     if normalized_model.startswith("ollama/"):
         return Decimal("0")
 
-    pricing_key = next(
-        (key for key in MODEL_PRICING_PER_MILLION if key in normalized_model),
-        None,
-    )
-    if pricing_key is None:
-        raise ValueError(f"No billing rate configured for model: {model}")
-
-    input_rate, output_rate = MODEL_PRICING_PER_MILLION[pricing_key]
+    catalog_model = catalog.get(normalized_model)
+    if catalog_model is not None:
+        input_rate = catalog_model.input_price_per_million
+        output_rate = catalog_model.output_price_per_million
+    else:
+        pricing_key = next(
+            (key for key in MODEL_PRICING_PER_MILLION if key in normalized_model),
+            None,
+        )
+        if pricing_key is None:
+            raise ValueError(f"No billing rate configured for model: {model}")
+        input_rate, output_rate = MODEL_PRICING_PER_MILLION[pricing_key]
     cost = (
         (Decimal(max(0, input_tokens)) / Decimal("1000000")) * input_rate
         + (Decimal(max(0, output_tokens)) / Decimal("1000000")) * output_rate

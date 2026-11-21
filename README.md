@@ -78,15 +78,21 @@ ollama pull qwen2.5-coder:7b
 ```
 
 The executor routes routine tasks (tests, documentation, UI, and boilerplate)
-to Ollama and keeps architecture, security, distributed-systems, and algorithm
-tasks on Gemini by default. Configure this behavior in `.env`:
+to Ollama and sends complex tasks to approved OpenRouter models. Configure this
+behavior in `.env`:
 ```env
-GEMINI_API_KEY=your-gemini-api-key
-DIETCODE_PRIMARY_MODEL=gemini-3-8-flash
+OPENROUTER_API_KEY=your-openrouter-api-key
+DIETCODE_PRIMARY_MODEL=gemini-3-5-flash-lite
 DIETCODE_LOCAL_MODEL=ollama/qwen2.5-coder:7b
 DIETCODE_LOCAL_ROUTING=true
 OLLAMA_API_BASE=http://127.0.0.1:11434
 ```
+
+The approved cloud keys are `gemini-2-0-flash`, `gemini-3-5-flash-lite`,
+`claude-3-5-sonnet`, `claude-3-5-haiku`, `gpt-4o`, and `gpt-4o-mini`.
+OpenRouter model IDs and token prices are synchronized at backend startup and
+every six hours. A cloud model is blocked when its current catalog entry or
+pricing is unavailable; Ollama remains available in that situation.
 
 Execution can also be selected in the dashboard:
 
@@ -172,9 +178,10 @@ Read execution history:
 GET /api/users/{user_id}/executions
 ```
 
-The current ledger has no authentication or live payment activation. Stripe
-test checkout, signed webhooks, and idempotent top-ups are implemented; live
-payment activation and production account verification remain future work.
+Clerk authenticates signed-in users, and the backend maps each verified Clerk
+user to a Neon billing account. Signed-out users can still use the local
+simulation mode, but live execution and billing endpoints require a Clerk
+session token.
 
 ### Stripe test payments
 
@@ -182,7 +189,6 @@ Stripe test checkout is available through `POST /api/billing/checkout`:
 
 ```json
 {
-  "user_id": 1,
   "amount_inr": 500
 }
 ```
@@ -197,6 +203,8 @@ Add these values to the local `.env` file:
 STRIPE_PUBLISHABLE_KEY=pk_test_...
 STRIPE_SECRET_KEY=sk_test_...
 INR_PER_USD=100
+CLERK_SECRET_KEY=sk_test_...
+DIETCODE_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
 Never expose or commit the secret key. To test crediting locally, install the
@@ -221,8 +229,8 @@ running on a non-default address.
 ## Local Gemini simulator
 
 Run `python simulator.py` to execute the bundled four-task DAG through one
-Gemini model while preserving dependency ordering and parent-output context.
-The simulator reads `GEMINI_API_KEY` from `.env` and ignores each task's
+model while preserving dependency ordering and parent-output context. The
+legacy simulator reads `GEMINI_API_KEY` from `.env` and ignores each task's
 assigned model. Set `GEMINI_SIMULATOR_MODEL` or pass `--model` to select a
 different Gemini model.
 

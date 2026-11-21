@@ -26,13 +26,18 @@ litellm.suppress_debug_info = True
 litellm.drop_params = True
 from dotenv import load_dotenv
 
+try:
+    from .openrouter_catalog import APPROVED_OPENROUTER_MODELS, catalog
+except ImportError:
+    from openrouter_catalog import APPROVED_OPENROUTER_MODELS, catalog
+
 logger = logging.getLogger(__name__)
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 # DietCode uses stable IDs for pricing and UI state. LiteLLM requires provider
 # qualified names for providers such as Google and Anthropic.
-PRIMARY_MODEL = os.getenv("DIETCODE_PRIMARY_MODEL", "gemini-3-8-flash")
+PRIMARY_MODEL = os.getenv("DIETCODE_PRIMARY_MODEL", "gemini-3-5-flash-lite")
 LOCAL_MODEL = os.getenv("DIETCODE_LOCAL_MODEL", "ollama/qwen2.5-coder:7b")
 OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434")
 LOCAL_ROUTING_ENABLED = os.getenv("DIETCODE_LOCAL_ROUTING", "true").lower() in {
@@ -82,8 +87,8 @@ class ExecutionSettings:
     max_retries: int = 1
 
     def __post_init__(self) -> None:
-        if self.mode not in {"selected", "hybrid", "ollama_only"}:
-            raise ValueError("mode must be selected, hybrid, or ollama_only")
+        if self.mode not in {"selected", "openrouter_only", "hybrid", "ollama_only"}:
+            raise ValueError("mode must be selected, openrouter_only, hybrid, or ollama_only")
         if not self.primary_model.strip() or not self.local_model.strip():
             raise ValueError("primary_model and local_model are required")
         if self.max_context_chars < 1000:
@@ -192,17 +197,9 @@ class DAGExecutor:
 
     @classmethod
     def _has_credentials_for(cls, model: str) -> bool:
-        litellm_model = LITELLM_MODEL_ALIASES.get(model, model).lower()
-        if litellm_model.startswith("ollama/"):
+        if model.lower().startswith("ollama/"):
             return cls._is_ollama_online()
-        if "gemini" in litellm_model:
-            key = os.getenv("GEMINI_API_KEY", "")
-            return bool(key.strip())
-        if "anthropic" in litellm_model or "claude" in litellm_model:
-            return bool(os.getenv("ANTHROPIC_API_KEY"))
-        if "openai" in litellm_model or "gpt" in litellm_model:
-            return bool(os.getenv("OPENAI_API_KEY"))
-        return False
+        return bool(os.getenv("OPENROUTER_API_KEY", "").strip()) and catalog.get(model) is not None
 
     async def _execute_task(
         self,
@@ -218,23 +215,19 @@ class DAGExecutor:
         try:
             routed_model = self._route_model(spec.model, spec.prompt, self._settings)
             if not self._has_credentials_for(routed_model):
-                if not self._settings.allow_fallback:
-                    unavailable_reason = (
-                        f"Ollama offline or unavailable for {routed_model}"
-                        if routed_model.startswith("ollama/")
-                        else f"No credentials or service available for {routed_model}"
+                unavailable_reason = (
+                    f"Ollama offline or unavailable for {routed_model}"
+                    if routed_model.startswith("ollama/")
+                    else (
+                        f"OpenRouter model {routed_model} is unavailable or has no current pricing"
+                        if os.getenv("OPENROUTER_API_KEY", "").strip()
+                        else "OPENROUTER_API_KEY is not configured"
                     )
-                    return self._failed_result(
-                        spec,
-                        unavailable_reason,
-                        routed_model=routed_model,
-                    )
-                logger.info("No active API credentials configured for %s; using high-fidelity local simulation", routed_model)
-                return self._simulate_task(
+                )
+                return self._failed_result(
                     spec,
-                    parent_results,
-                    original_error=f"No API key configured for {spec.model}",
                     routed_model=routed_model,
+                    error=unavailable_reason,
                 )
 
             response = await self._complete_with_retries(routed_model, messages)
@@ -276,6 +269,19 @@ class DAGExecutor:
         request_options = {}
         if litellm_model.startswith("ollama/"):
             request_options["api_base"] = OLLAMA_API_BASE
+        else:
+            catalog_model = catalog.get(model)
+            if catalog_model is None:
+                raise RuntimeError(f"OpenRouter model {model} is unavailable or has no current pricing")
+            litellm_model = f"openrouter/{catalog_model.openrouter_id}"
+            request_options.update({
+                "api_key": os.getenv("OPENROUTER_API_KEY", "").strip(),
+                "api_base": os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+                "extra_headers": {
+                    "HTTP-Referer": os.getenv("DIETCODE_SITE_URL", "http://localhost:5173"),
+                    "X-Title": "DietCode",
+                },
+            })
         last_error: Exception | None = None
         for attempt in range(self._max_retries + 1):
             try:
@@ -302,7 +308,7 @@ class DAGExecutor:
                     break
                 if attempt >= self._max_retries:
                     break
-                delay = 1.0
+                delay = min(8.0, 2.0 ** attempt)
                 logger.warning(
                     "LiteLLM request failed (attempt %d/%d); retrying in %ss: %s",
                     attempt + 1,
@@ -322,40 +328,26 @@ class DAGExecutor:
         prompt: str,
         settings: ExecutionSettings,
     ) -> str:
-        """Route to requested model if credentials exist, otherwise route intelligently."""
+        """Route simple work locally and approved cloud work through OpenRouter."""
         if settings.mode == "ollama_only":
             return settings.local_model
-        if settings.mode == "selected":
+        if settings.mode in {"selected", "openrouter_only"}:
             return settings.primary_model
         if requested_model.startswith("ollama/"):
             return requested_model
-        litellm_model = LITELLM_MODEL_ALIASES.get(requested_model, requested_model)
-        
-        # Check credentials for requested model
-        if litellm_model.startswith("ollama/"):
-            if cls._is_ollama_online():
-                return litellm_model
-            return requested_model
-        if "gemini" in litellm_model and cls._has_credentials_for("gemini"):
-            return litellm_model
-        if ("anthropic" in litellm_model or "claude" in litellm_model) and os.getenv("ANTHROPIC_API_KEY"):
-            return litellm_model
-        if ("openai" in litellm_model or "gpt" in litellm_model) and os.getenv("OPENAI_API_KEY"):
-            return litellm_model
 
-        # If local routing enabled and Ollama daemon is actively reachable
+        # Hybrid mode sends routine work to Ollama when it is available.
         if LOCAL_ROUTING_ENABLED and cls._is_ollama_online():
             normalized_prompt = prompt.lower()
             if any(term in normalized_prompt for term in LOCAL_TASK_TERMS):
                 return settings.local_model
-            return settings.primary_model
-
-        # If local routing is unavailable, use the configured primary provider
-        # when its credentials are available.
-        if cls._has_credentials_for(settings.primary_model):
-            return LITELLM_MODEL_ALIASES.get(settings.primary_model, settings.primary_model)
-
-        return litellm_model
+        # Planner recommendations are preserved only when approved. Unknown
+        # recommendations use the configured approved primary model.
+        return (
+            requested_model
+            if requested_model in APPROVED_OPENROUTER_MODELS
+            else settings.primary_model
+        )
 
     def _simulate_task(
         self,
@@ -549,7 +541,7 @@ class DAGExecutor:
             f"```python\n{code_block}```\n\n"
             f"---\n"
             f"ℹ️ **Executed in DietCode Simulation Mode**: No external API calls were required.\n"
-            f"*(To execute live model calls, add your `GEMINI_API_KEY` to `.env` or start Ollama)*"
+            f"*(To execute live cloud calls, add your `OPENROUTER_API_KEY` to `.env`, or start Ollama)*"
         )
 
         in_tok = max(240, len(spec.prompt.split()) * 3)

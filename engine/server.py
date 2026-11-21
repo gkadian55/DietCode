@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 from decimal import Decimal, InvalidOperation
@@ -43,6 +44,7 @@ try:
     )
     from models.planner import DAGPlanner
     from models.token_forecaster import MODEL_PROFILES, TokenForecaster
+    from openrouter_catalog import CATALOG_REFRESH_SECONDS, APPROVED_OPENROUTER_MODELS, catalog
 except ImportError:
     from engine.database import SessionLocal, initialize_database
     from engine.executor import (
@@ -65,13 +67,26 @@ except ImportError:
     )
     from engine.models.planner import DAGPlanner
     from engine.models.token_forecaster import MODEL_PROFILES, TokenForecaster
+    from engine.openrouter_catalog import (
+        CATALOG_REFRESH_SECONDS,
+        APPROVED_OPENROUTER_MODELS,
+        catalog,
+    )
 
 app = FastAPI(title="DietCode ML Engine", version="1.0.0")
 
-# Enable CORS for local Electron and Vite frontend
+# Only the local Vite/Electron development origins may call the API.
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "DIETCODE_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -187,6 +202,26 @@ initialize_database()
 print("[Server] ML Engine ready!")
 
 
+async def _refresh_openrouter_catalog() -> None:
+    """Refresh pricing in a worker thread so the event loop stays responsive."""
+    while True:
+        await asyncio.to_thread(catalog.refresh)
+        await asyncio.sleep(CATALOG_REFRESH_SECONDS)
+
+
+@app.on_event("startup")
+async def start_openrouter_catalog() -> None:
+    app.state.openrouter_catalog_task = asyncio.create_task(_refresh_openrouter_catalog())
+
+
+@app.on_event("shutdown")
+async def stop_openrouter_catalog() -> None:
+    task = getattr(app.state, "openrouter_catalog_task", None)
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 class DecomposeRequest(BaseModel):
     goal: str
 
@@ -247,8 +282,17 @@ def get_model_profiles():
 
 
 @app.get("/api/providers")
-def get_providers():
-    """Return configured provider availability without exposing credentials."""
+def get_providers(_current_user: dict[str, Any] = Depends(get_current_clerk_user)):
+    """Return provider availability and approved cloud model status."""
+    cloud_models = {}
+    for key, model_id in APPROVED_OPENROUTER_MODELS.items():
+        model = catalog.get(key)
+        cloud_models[key] = {
+            "openrouterId": model_id,
+            "available": model is not None,
+            "inputPricePerMillion": str(model.input_price_per_million) if model else None,
+            "outputPricePerMillion": str(model.output_price_per_million) if model else None,
+        }
     return {
         "providers": [
             {
@@ -258,17 +302,11 @@ def get_providers():
                 "apiBase": OLLAMA_API_BASE,
             },
             {
-                "id": "gemini",
-                "available": bool(os.getenv("GEMINI_API_KEY")),
-                "model": PRIMARY_MODEL,
-            },
-            {
-                "id": "openai",
-                "available": bool(os.getenv("OPENAI_API_KEY")),
-            },
-            {
-                "id": "anthropic",
-                "available": bool(os.getenv("ANTHROPIC_API_KEY")),
+                "id": "openrouter",
+                "available": bool(os.getenv("OPENROUTER_API_KEY", "").strip())
+                and any(model["available"] for model in cloud_models.values()),
+                "models": cloud_models,
+                "lastRefresh": catalog.last_refresh,
             },
         ]
     }
@@ -490,7 +528,7 @@ def _estimate_graph_cost(req: ExecuteRequest) -> Decimal:
             upstream_count=len(task.get("depends_on") or []),
             depth=1,
         )
-        if req.mode == "selected":
+        if req.mode in {"selected", "openrouter_only"}:
             routed_model = req.primary_model
         else:
             routed_model = DAGExecutor._route_model(
@@ -504,6 +542,14 @@ def _estimate_graph_cost(req: ExecuteRequest) -> Decimal:
                     max_context_chars=req.max_context_chars,
                     request_timeout=req.request_timeout,
                     max_retries=req.max_retries,
+                ),
+            )
+        if not routed_model.startswith("ollama/") and catalog.get(routed_model) is None:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"OpenRouter model {routed_model} is unavailable or its pricing "
+                    "catalog is stale. Ollama-only execution remains available."
                 ),
             )
         estimated_cost += calculate_task_cost(
@@ -527,14 +573,20 @@ def _refund_execution_reservation(
 
 
 @app.post("/api/decompose")
-def decompose_goal(req: DecomposeRequest):
+def decompose_goal(
+    req: DecomposeRequest,
+    _current_user: dict[str, Any] = Depends(get_current_clerk_user),
+):
     if not req.goal or not req.goal.strip():
         raise HTTPException(status_code=400, detail="Goal cannot be empty")
     return planner.decompose_goal(req.goal)
 
 
 @app.post("/api/predict-node")
-def predict_node(req: PredictNodeRequest):
+def predict_node(
+    req: PredictNodeRequest,
+    _current_user: dict[str, Any] = Depends(get_current_clerk_user),
+):
     return forecaster.forecast_node(
         title=req.title,
         description=req.description,
@@ -544,7 +596,10 @@ def predict_node(req: PredictNodeRequest):
 
 
 @app.post("/api/replan")
-def replan_graph(req: ReplanRequest):
+def replan_graph(
+    req: ReplanRequest,
+    _current_user: dict[str, Any] = Depends(get_current_clerk_user),
+):
     """Recomputes aggregates, critical path, and model trade-offs when users add/edit/delete nodes or edges."""
     try:
         aggregates = planner.calculate_graph_aggregates(req.nodes)
@@ -709,7 +764,10 @@ async def execute_graph(
 
 
 @app.post("/api/export")
-def export_project(req: ExportRequest):
+def export_project(
+    req: ExportRequest,
+    _current_user: dict[str, Any] = Depends(get_current_clerk_user),
+):
     """Extract code deliverables and export as local project directory + zip."""
     try:
         exporter = ProjectExporter()
