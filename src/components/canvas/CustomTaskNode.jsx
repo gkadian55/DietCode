@@ -10,7 +10,7 @@ export const CustomTaskNode = memo(({ id, data, selected }) => {
   const assignedAgentId = data.assignedAgent || data.recommendedAgent?.id;
   const currentModelEval = data.modelEvaluations?.[assignedAgentId] || {};
   const executionTarget = data.executionModel
-    || (executionSettings.mode === 'selected'
+    || (['selected', 'openrouter_only'].includes(executionSettings.mode)
       ? executionSettings.primary_model
       : executionSettings.mode === 'ollama_only'
         ? executionSettings.local_model

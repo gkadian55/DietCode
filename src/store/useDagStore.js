@@ -19,7 +19,11 @@ const loadExecutionSettings = () => {
   if (typeof window === 'undefined') return defaultExecutionSettings;
   try {
     const stored = JSON.parse(window.localStorage.getItem(EXECUTION_SETTINGS_KEY) || '{}');
-    return { ...defaultExecutionSettings, ...stored };
+    return {
+      ...defaultExecutionSettings,
+      ...stored,
+      primary_model: 'gemini-3-5-flash-lite'
+    };
   } catch {
     return defaultExecutionSettings;
   }
@@ -411,7 +415,7 @@ export const useDagStore = create((set, get) => ({
   refreshProviders: async () => {
     set({ providersLoading: true });
     try {
-      const response = await fetch(`${API_BASE}/api/providers`);
+      const response = await apiFetch(`${API_BASE}/api/providers`);
       if (!response.ok) throw new Error(`Provider check failed with HTTP ${response.status}`);
       const data = await response.json();
       set({ providers: data.providers || [], providersLoading: false });
@@ -471,7 +475,7 @@ export const useDagStore = create((set, get) => ({
     set({ exportLoading: true, exportError: null });
 
     try {
-      const res = await fetch(`${API_BASE}/api/export`, {
+      const res = await apiFetch(`${API_BASE}/api/export`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -674,7 +678,7 @@ export const useDagStore = create((set, get) => ({
       console.warn('[Store] Remote execution failed or timed out:', err);
       if (!executionSettings.allow_fallback && get().isAuthenticated) {
         const failedNodes = get().nodes.map((node) => {
-          const executionTarget = executionSettings.mode === 'selected'
+          const executionTarget = ['selected', 'openrouter_only'].includes(executionSettings.mode)
             ? executionSettings.primary_model
             : executionSettings.mode === 'ollama_only'
               ? executionSettings.local_model
@@ -745,7 +749,7 @@ export const useDagStore = create((set, get) => ({
             executionStatus: 'completed',
             executionError: null,
             executionOutput: simOutput,
-            executionModel: executionSettings.mode === 'selected'
+            executionModel: ['selected', 'openrouter_only'].includes(executionSettings.mode)
               ? executionSettings.primary_model
               : executionSettings.mode === 'ollama_only'
                 ? executionSettings.local_model
@@ -915,7 +919,7 @@ export const useDagStore = create((set, get) => ({
 
     set({ isLoading: true });
     try {
-      const res = await fetch(`${API_BASE}/api/decompose`, {
+      const res = await apiFetch(`${API_BASE}/api/decompose`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ goal: targetGoal })
@@ -957,7 +961,7 @@ export const useDagStore = create((set, get) => ({
     if (nodes.length === 0) return;
 
     try {
-      const res = await fetch(`${API_BASE}/api/replan`, {
+      const res = await apiFetch(`${API_BASE}/api/replan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nodes, edges })
@@ -988,7 +992,7 @@ export const useDagStore = create((set, get) => ({
       try {
         const title = updatedFields.title || targetNode.data.title;
         const desc = updatedFields.description || targetNode.data.description;
-        const res = await fetch(`${API_BASE}/api/predict-node`, {
+        const res = await apiFetch(`${API_BASE}/api/predict-node`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1049,7 +1053,7 @@ export const useDagStore = create((set, get) => ({
     };
 
     try {
-      const res = await fetch(`${API_BASE}/api/predict-node`, {
+      const res = await apiFetch(`${API_BASE}/api/predict-node`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

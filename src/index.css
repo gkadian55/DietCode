@@ -1111,6 +1111,15 @@ body {
   transition: border-color 0.2s;
 }
 
+select.form-input, select.form-select {
+  color-scheme: dark;
+}
+
+select.form-input option, select.form-select option {
+  background: #111827;
+  color: #f8fafc;
+}
+
 .form-input:focus, .form-textarea:focus, .form-select:focus {
   border-color: var(--accent-indigo);
   background: rgba(255, 255, 255, 0.08);

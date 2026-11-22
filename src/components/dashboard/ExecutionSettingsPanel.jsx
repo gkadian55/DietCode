@@ -33,18 +33,16 @@ export const ExecutionSettingsPanel = () => {
           </div>
           <label className="form-label">Routing mode
             <select className="form-input" value={executionSettings.mode} onChange={(e) => setExecutionSettings({ mode: e.target.value })} disabled={isExecuting}>
-              <option value="hybrid">Hybrid routing</option>
-              <option value="selected">Primary model only</option>
+              <option value="selected">Gemini 3.5 (testing)</option>
               <option value="ollama_only">Ollama only</option>
+              <option value="openrouter_only">Fully OpenRouter</option>
+              <option value="hybrid">Hybrid (recommended)</option>
             </select>
           </label>
           {executionSettings.mode !== 'ollama_only' && (
             <label className="form-label">Primary model
               <select className="form-input" value={executionSettings.primary_model} onChange={(e) => setExecutionSettings({ primary_model: e.target.value })} disabled={isExecuting}>
                 <option value="gemini-3-5-flash-lite">Gemini 3.5 Flash Lite</option>
-                <option value="gemini-3-8-flash">Gemini 3.8 Flash</option>
-                <option value="gpt-4o">GPT-4o</option>
-                <option value="claude-3-5-sonnet">Claude Sonnet</option>
               </select>
             </label>
           )}
