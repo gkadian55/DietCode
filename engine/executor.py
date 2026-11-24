@@ -228,6 +228,7 @@ class DAGExecutor:
                     spec,
                     routed_model=routed_model,
                     error=unavailable_reason,
+                    ollama_failure=routed_model.startswith("ollama/"),
                 )
 
             response = await self._complete_with_retries(routed_model, messages)
@@ -242,6 +243,9 @@ class DAGExecutor:
                 "total_tokens": prompt_tokens + completion_tokens,
                 "model": spec.model,
                 "routed_model": routed_model,
+                "provider": self._provider_name(routed_model),
+                "provider_request_id": self._response_request_id(response),
+                "ollama_failure": False,
                 "error_category": None,
                 "error": None,
             }
@@ -250,6 +254,13 @@ class DAGExecutor:
         except Exception as exc:
             err_msg = self._exception_text(exc)
             logger.warning("Task %s failed on live model (%s): %s", spec.task_id, spec.model, err_msg)
+            if routed_model.startswith("ollama/"):
+                return self._failed_result(
+                    spec,
+                    err_msg,
+                    routed_model=routed_model,
+                    ollama_failure=True,
+                )
             # Fall back to high-fidelity simulation so user always gets actionable code deliverables
             if not self._settings.allow_fallback:
                 return self._failed_result(spec, err_msg, routed_model=routed_model)
@@ -556,6 +567,9 @@ class DAGExecutor:
             "total_tokens": in_tok + out_tok,
             "model": spec.model,
             "routed_model": routed_model or f"{spec.model} (Simulated)",
+            "provider": "simulation",
+            "provider_request_id": None,
+            "ollama_failure": False,
             "error_category": self._classify_error(original_error) if original_error else None,
             "fallback_reason": original_error or None,
             "error": None,
@@ -663,6 +677,26 @@ class DAGExecutor:
         return read("prompt_tokens"), read("completion_tokens")
 
     @staticmethod
+    def _provider_name(routed_model: str) -> str:
+        if routed_model.startswith("ollama/"):
+            return "ollama"
+        if routed_model.startswith("openrouter/") or routed_model in APPROVED_OPENROUTER_MODELS:
+            return "openrouter"
+        return "unknown"
+
+    @staticmethod
+    def _response_request_id(response: Any) -> str | None:
+        for field in ("id", "request_id"):
+            value = getattr(response, field, None)
+            if value is not None:
+                return str(value)
+            if isinstance(response, Mapping):
+                value = response.get(field)
+                if value is not None:
+                    return str(value)
+        return None
+
+    @staticmethod
     def _normalize_graph(
         graph: Mapping[str, Mapping[str, Any]],
     ) -> dict[str, _TaskSpec]:
@@ -728,6 +762,7 @@ class DAGExecutor:
         error: str,
         *,
         routed_model: str | None = None,
+        ollama_failure: bool = False,
     ) -> dict[str, Any]:
         return {
             "status": "failed",
@@ -738,6 +773,15 @@ class DAGExecutor:
             "total_tokens": 0,
             "model": spec.model,
             "routed_model": routed_model,
+            "provider": (
+                "ollama"
+                if routed_model and routed_model.startswith("ollama/")
+                else "openrouter"
+                if routed_model
+                else "unknown"
+            ),
+            "provider_request_id": None,
+            "ollama_failure": ollama_failure,
             "error_category": DAGExecutor._classify_error(error),
             "error": error,
         }

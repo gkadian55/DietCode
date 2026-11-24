@@ -84,6 +84,29 @@ class ExecutorSettingsTests(unittest.TestCase):
             with self.subTest(message=message):
                 self.assertEqual(DAGExecutor._classify_error(message), category)
 
+    def test_ollama_failure_is_not_silently_simulated(self):
+        graph = {
+            "task": {
+                "prompt": "write documentation",
+                "model": "ollama/qwen2.5-coder:7b",
+                "depends_on": [],
+            }
+        }
+        executor = DAGExecutor(
+            settings=ExecutionSettings(
+                mode="ollama_only",
+                allow_fallback=True,
+                request_timeout=1,
+            )
+        )
+        with patch.object(DAGExecutor, "_has_credentials_for", return_value=False):
+            results = asyncio.run(executor.execute(graph))
+        result = results["task"]
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(result["ollama_failure"])
+        self.assertEqual(result["provider"], "ollama")
+        self.assertEqual(result["execution_mode"], "failed")
+
 
 if __name__ == "__main__":
     unittest.main()
