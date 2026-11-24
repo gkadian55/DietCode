@@ -10,6 +10,7 @@ import { AgentCanvas } from './components/canvas/AgentCanvas';
 import { NodeInspector } from './components/inspector/NodeInspector';
 import { AddNodeModal } from './components/modal/AddNodeModal';
 import { ExportModal } from './components/modal/ExportModal';
+import { OllamaFailureModal } from './components/modal/OllamaFailureModal';
 import { useDagStore } from './store/useDagStore';
 import { setAuthTokenGetter } from './utils/apiFetch';
 
@@ -55,6 +56,7 @@ export function App() {
       </div>
       <AddNodeModal />
       <ExportModal />
+      <OllamaFailureModal />
       <CompletionCelebration />
     </div>
   );

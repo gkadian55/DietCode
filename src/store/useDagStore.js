@@ -382,6 +382,7 @@ export const useDagStore = create((set, get) => ({
   executionProgress: { completed: 0, total: 0 },
   showCompletionCelebration: false,
   executionError: null,
+  ollamaFailurePrompt: null,
   executionSettings: {
     ...loadExecutionSettings()
   },
@@ -401,6 +402,26 @@ export const useDagStore = create((set, get) => ({
 
   setBackendStatus: (status) => set({ backendStatus: status }),
   setAuthenticationState: (isAuthenticated) => set({ isAuthenticated }),
+  setOllamaFailurePrompt: (prompt) => set({ ollamaFailurePrompt: prompt }),
+  quitAfterOllamaFailure: () => set({ ollamaFailurePrompt: null }),
+  continueAfterOllamaFailure: async () => {
+    set((state) => ({
+      ollamaFailurePrompt: null,
+      executionSettings: {
+        ...state.executionSettings,
+        mode: 'openrouter_only'
+      }
+    }));
+    try {
+      await window.localStorage.setItem(
+        EXECUTION_SETTINGS_KEY,
+        JSON.stringify(get().executionSettings)
+      );
+    } catch {
+      // Execution settings persistence is optional.
+    }
+    return get().executeGraph();
+  },
   setExecutionSettings: (settings) => set((state) => ({
     executionSettings: (() => {
       const next = { ...state.executionSettings, ...settings };
@@ -630,6 +651,9 @@ export const useDagStore = create((set, get) => ({
             executionModel: result.routed_model || result.model,
             executionMode: result.execution_mode
               || (result.status === 'insufficient_funds' ? 'blocked' : 'live'),
+            provider: result.provider,
+            providerRequestId: result.provider_request_id,
+            ollamaFailure: Boolean(result.ollama_failure),
             executionErrorCategory: result.error_category,
             executionFallbackReason: result.fallback_reason,
             actualTokens: {
@@ -647,6 +671,17 @@ export const useDagStore = create((set, get) => ({
       const totalActIn = executedNodes.reduce((sum, n) => sum + (n.data.actualTokens?.input || 0), 0);
       const totalActOut = executedNodes.reduce((sum, n) => sum + (n.data.actualTokens?.output || 0), 0);
       const tokenSavings = buildTokenSavings(executedNodes, totalActIn, totalActOut);
+      const ollamaFailures = executedNodes
+        .filter((node) => node.data.ollamaFailure)
+        .map((node) => node.id);
+      if (ollamaFailures.length > 0) {
+        set({
+          ollamaFailurePrompt: {
+            taskIds: ollamaFailures,
+            message: 'Ollama failed for one or more local tasks.'
+          }
+        });
+      }
       const completedCount = executedNodes.filter(
         (node) => node.data.executionStatus === 'completed'
       ).length;
@@ -676,6 +711,36 @@ export const useDagStore = create((set, get) => ({
       clearTimeout(timeoutId);
       const message = err instanceof Error ? err.message : 'Remote execution failed';
       console.warn('[Store] Remote execution failed or timed out:', err);
+      const openRouterUnavailable =
+        /OPENROUTER_API_KEY|OpenRouter model|catalog is stale|pricing catalog/i.test(message);
+      if (openRouterUnavailable) {
+        const failedNodes = get().nodes.map((node) => ({
+          ...node,
+          data: {
+            ...node.data,
+            executionStatus: 'failed',
+            executionError: message,
+            executionMode: 'failed',
+            provider: 'openrouter',
+            executionErrorCategory: 'model_unavailable'
+          }
+        }));
+        const currentSelectedId = get().selectedNode?.id;
+        set({
+          nodes: failedNodes,
+          selectedNode: currentSelectedId
+            ? failedNodes.find((node) => node.id === currentSelectedId) || get().selectedNode
+            : get().selectedNode,
+          isExecuting: false,
+          executionProgress: {
+            completed: failedNodes.filter((node) => node.data.executionStatus === 'completed').length,
+            total: nodes.length
+          },
+          showCompletionCelebration: false,
+          executionError: message
+        });
+        return { status: 'failed', error: message };
+      }
       if (!executionSettings.allow_fallback && get().isAuthenticated) {
         const failedNodes = get().nodes.map((node) => {
           const executionTarget = ['selected', 'openrouter_only'].includes(executionSettings.mode)
@@ -848,6 +913,9 @@ export const useDagStore = create((set, get) => ({
             executionModel: result.routed_model || result.model,
             executionMode: result.execution_mode
               || (result.status === 'insufficient_funds' ? 'blocked' : 'live'),
+            provider: result.provider,
+            providerRequestId: result.provider_request_id,
+            ollamaFailure: Boolean(result.ollama_failure),
             executionErrorCategory: result.error_category,
             executionFallbackReason: result.fallback_reason,
             actualTokens: {
@@ -861,6 +929,14 @@ export const useDagStore = create((set, get) => ({
           nodes: completedNodes,
           selectedNode: completedNodes.find(n => n.id === nodeId)
         });
+        if (result.ollama_failure) {
+          set({
+            ollamaFailurePrompt: {
+              taskIds: [nodeId],
+              message: 'Ollama failed for this local task.'
+            }
+          });
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Task execution failed';

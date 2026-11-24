@@ -148,6 +148,11 @@ export const CustomTaskNode = memo(({ id, data, selected }) => {
                     : data.executionMode.toUpperCase()}
             </div>
           )}
+          {data.provider && (
+            <div style={{ color: '#94a3b8', fontSize: 9, marginTop: 2 }}>
+              Provider: {data.provider}
+            </div>
+          )}
           {(executionStatus === 'failed' || executionStatus === 'insufficient_funds') && data.executionError && (
             <div style={{ color: executionStatus === 'insufficient_funds' ? '#fbbf24' : '#f87171', fontSize: 10, marginTop: 6 }}>
               {data.executionError}

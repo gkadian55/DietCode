@@ -388,6 +388,11 @@ export const NodeInspector = () => {
                               : 'LIVE'}
                       </span>
                     )}
+                    {data.provider && (
+                      <span style={{ color: '#94a3b8', marginLeft: 8 }}>
+                        Provider: {data.provider}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -417,6 +422,12 @@ export const NodeInspector = () => {
               </button>
             </div>
           </div>
+
+          {data.providerRequestId && (
+            <div style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'var(--font-mono)', marginTop: 8 }}>
+              Provider request: {data.providerRequestId}
+            </div>
+          )}
 
           {/* Actual Token Metrics (When Completed) */}
           {data.actualTokens && (
