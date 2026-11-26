@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { applyNodeChanges, applyEdgeChanges, addEdge } from '@xyflow/react';
 import { apiFetch } from '../utils/apiFetch';
+import { createLocalId, dietCodeDb } from '../storage/dietCodeDb';
 
 const API_BASE = 'http://127.0.0.1:8765';
 const EXECUTION_SETTINGS_KEY = 'dietcode.executionSettings';
@@ -353,6 +354,27 @@ const buildTokenSavings = (nodes, actualInput, actualOutput) => {
   };
 };
 
+const RUNTIME_NODE_FIELDS = new Set([
+  'executionStatus',
+  'executionError',
+  'executionOutput',
+  'executionModel',
+  'executionMode',
+  'executionErrorCategory',
+  'executionFallbackReason',
+  'actualTokens',
+  'provider',
+  'providerRequestId',
+  'ollamaFailure'
+]);
+
+const createDagSnapshotNodes = (nodes) => nodes.map((node) => ({
+  ...node,
+  data: Object.fromEntries(
+    Object.entries(node.data || {}).filter(([key]) => !RUNTIME_NODE_FIELDS.has(key))
+  )
+}));
+
 export const useDagStore = create((set, get) => ({
   nodes: [],
   edges: [],
@@ -399,6 +421,12 @@ export const useDagStore = create((set, get) => ({
   billingLoading: false,
   billingError: null,
   isAuthenticated: false,
+  currentProjectId: null,
+  savedProjects: [],
+  isProjectsModalOpen: false,
+  projectPersistenceStatus: 'idle',
+  projectPersistenceError: null,
+  currentRunId: null,
 
   setBackendStatus: (status) => set({ backendStatus: status }),
   setAuthenticationState: (isAuthenticated) => set({ isAuthenticated }),
@@ -433,6 +461,254 @@ export const useDagStore = create((set, get) => ({
       return next;
     })()
   })),
+  refreshSavedProjects: async () => {
+    try {
+      const projects = await dietCodeDb.projects.orderBy('updatedAt').reverse().toArray();
+      set({ savedProjects: projects });
+      return projects;
+    } catch (error) {
+      console.error('[Store] Could not load saved projects:', error);
+      set({ projectPersistenceError: 'Could not load local projects.' });
+      return [];
+    }
+  },
+  setProjectsModalOpen: (open) => set({ isProjectsModalOpen: open }),
+  saveCurrentProject: async (name = null) => {
+    const state = get();
+    if (!state.currentProjectId) {
+      return get().createProject(state.goalInput);
+    }
+
+    const projectId = state.currentProjectId;
+    set({ projectPersistenceStatus: 'saving', projectPersistenceError: null });
+    try {
+      const existing = await dietCodeDb.projects.get(projectId);
+      const latestState = get();
+      if (latestState.currentProjectId !== projectId) {
+        set({ projectPersistenceStatus: 'idle' });
+        return null;
+      }
+      const now = new Date().toISOString();
+      await dietCodeDb.projects.put({
+        id: projectId,
+        name: name?.trim().slice(0, 100) || existing?.name || latestState.goalInput || 'Untitled project',
+        goal: latestState.goalInput,
+        nodes: JSON.parse(JSON.stringify(latestState.nodes)),
+        edges: JSON.parse(JSON.stringify(latestState.edges)),
+        aggregates: JSON.parse(JSON.stringify(latestState.aggregates)),
+        executionSettings: { ...latestState.executionSettings },
+        createdAt: existing?.createdAt || now,
+        updatedAt: now,
+        schemaVersion: 1
+      });
+      set({ projectPersistenceStatus: 'saved' });
+      await get().refreshSavedProjects();
+      return projectId;
+    } catch (error) {
+      console.error('[Store] Could not save current project:', error);
+      set({
+        projectPersistenceStatus: 'error',
+        projectPersistenceError: 'Could not save this project locally.'
+      });
+      return null;
+    }
+  },
+  loadProjectHistory: async (projectId) => {
+    try {
+      const snapshots = await dietCodeDb.dagSnapshots
+        .where('projectId')
+        .equals(projectId)
+        .toArray();
+      const runs = await dietCodeDb.runs
+        .where('projectId')
+        .equals(projectId)
+        .toArray();
+      snapshots.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      runs.sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+      const runsBySnapshot = new Map(runs.map((run) => [run.snapshotId, run]));
+      return snapshots.map((snapshot) => ({
+        ...snapshot,
+        run: runsBySnapshot.get(snapshot.id) || null
+      }));
+    } catch (error) {
+      console.error('[Store] Could not load project history:', error);
+      set({ projectPersistenceError: "Could not load this project's history." });
+      return [];
+    }
+  },
+  createProject: async (name) => {
+    const state = get();
+    if (state.currentProjectId) await get().saveCurrentProject();
+    const id = createLocalId();
+    const now = new Date().toISOString();
+    const projectName = (name || '').trim() || state.goalInput || 'Untitled project';
+    const project = {
+      id,
+      name: projectName.slice(0, 100),
+      goal: state.goalInput,
+      nodes: JSON.parse(JSON.stringify(state.nodes)),
+      edges: JSON.parse(JSON.stringify(state.edges)),
+      aggregates: JSON.parse(JSON.stringify(state.aggregates)),
+      executionSettings: { ...state.executionSettings },
+      createdAt: now,
+      updatedAt: now,
+      schemaVersion: 1
+    };
+    try {
+      await dietCodeDb.projects.add(project);
+      set({
+        currentProjectId: id,
+        projectPersistenceStatus: 'saved',
+        projectPersistenceError: null
+      });
+      await get().refreshSavedProjects();
+      return id;
+    } catch (error) {
+      console.error('[Store] Could not create local project:', error);
+      set({
+        projectPersistenceStatus: 'error',
+        projectPersistenceError: 'Could not create a local project.'
+      });
+      return null;
+    }
+  },
+  loadProject: async (projectId) => {
+    if (get().currentProjectId) await get().saveCurrentProject();
+    try {
+      const project = await dietCodeDb.projects.get(projectId);
+      if (!project) throw new Error('Project not found');
+      set({
+        currentProjectId: project.id,
+        goalInput: project.goal || project.name,
+        nodes: project.nodes || [],
+        edges: project.edges || [],
+        aggregates: project.aggregates || get().aggregates,
+        executionSettings: {
+          ...defaultExecutionSettings,
+          ...(project.executionSettings || {})
+        },
+        selectedNode: project.nodes?.[0] || null,
+        executionError: null,
+        projectPersistenceStatus: 'saved',
+        projectPersistenceError: null
+      });
+      return true;
+    } catch (error) {
+      console.error('[Store] Could not open local project:', error);
+      set({ projectPersistenceError: 'Could not open that local project.' });
+      return false;
+    }
+  },
+  initializeLocalProjects: async () => {
+    try {
+      const unfinishedRuns = await dietCodeDb.runs.where('status').equals('running').toArray();
+      if (unfinishedRuns.length > 0) {
+        await dietCodeDb.runs.bulkPut(unfinishedRuns.map((run) => ({
+          ...run,
+          status: 'interrupted',
+          completedAt: new Date().toISOString()
+        })));
+      }
+      const latestProject = await dietCodeDb.projects.orderBy('updatedAt').last();
+      if (latestProject) {
+        await get().loadProject(latestProject.id);
+        await get().refreshSavedProjects();
+        return;
+      }
+      await get().decomposeGoal(get().goalInput);
+      await get().createProject(get().goalInput);
+    } catch (error) {
+      console.error('[Store] Local project initialization failed:', error);
+      set({ projectPersistenceError: 'Local project storage is unavailable.' });
+      await get().decomposeGoal(get().goalInput);
+    }
+  },
+  restoreDagSnapshot: async (snapshotId) => {
+    try {
+      const snapshot = await dietCodeDb.dagSnapshots.get(snapshotId);
+      if (!snapshot) throw new Error('DAG snapshot not found');
+      const loaded = await get().loadProject(snapshot.projectId);
+      if (!loaded) return false;
+      const restoredNodes = JSON.parse(JSON.stringify(snapshot.nodes));
+      set({
+        goalInput: snapshot.goal,
+        nodes: restoredNodes,
+        edges: JSON.parse(JSON.stringify(snapshot.edges)),
+        aggregates: snapshot.aggregates || get().aggregates,
+        executionSettings: {
+          ...defaultExecutionSettings,
+          ...snapshot.executionSettings
+        },
+        selectedNode: restoredNodes[0] || null
+      });
+      await get().saveCurrentProject();
+      return true;
+    } catch (error) {
+      console.error('[Store] Could not restore DAG snapshot:', error);
+      set({ projectPersistenceError: 'Could not restore that DAG snapshot.' });
+      return false;
+    }
+  },
+  startLocalRun: async (kind = 'graph', taskIds = []) => {
+    try {
+      if (!get().currentProjectId) await get().createProject(get().goalInput);
+      else await get().saveCurrentProject();
+      const state = get();
+      if (!state.currentProjectId) return null;
+      const now = new Date().toISOString();
+      const snapshotId = createLocalId();
+      const runId = createLocalId();
+      await dietCodeDb.transaction('rw', dietCodeDb.dagSnapshots, dietCodeDb.runs, async () => {
+        await dietCodeDb.dagSnapshots.add({
+          id: snapshotId,
+          projectId: state.currentProjectId,
+          goal: state.goalInput,
+          nodes: JSON.parse(JSON.stringify(createDagSnapshotNodes(state.nodes))),
+          edges: JSON.parse(JSON.stringify(state.edges)),
+          aggregates: JSON.parse(JSON.stringify(state.aggregates)),
+          executionSettings: { ...state.executionSettings },
+          taskIds,
+          createdAt: now,
+          schemaVersion: 1
+        });
+        await dietCodeDb.runs.add({
+          id: runId,
+          projectId: state.currentProjectId,
+          snapshotId,
+          kind,
+          status: 'running',
+          taskIds,
+          startedAt: now,
+          completedAt: null,
+          results: null
+        });
+      });
+      set({ currentRunId: runId, projectPersistenceError: null });
+      return runId;
+    } catch (error) {
+      console.error('[Store] Could not save DAG run snapshot:', error);
+      set({ projectPersistenceError: 'Run started, but its local snapshot could not be saved.' });
+      return null;
+    }
+  },
+  finishLocalRun: async (runId, status, results, billing = null) => {
+    if (!runId) return;
+    try {
+      const run = await dietCodeDb.runs.get(runId);
+      if (!run) return;
+      await dietCodeDb.runs.put({
+        ...run,
+        status,
+        results: JSON.parse(JSON.stringify(results)),
+        billing: billing ? JSON.parse(JSON.stringify(billing)) : null,
+        completedAt: new Date().toISOString()
+      });
+      set({ currentRunId: null });
+    } catch (error) {
+      console.error('[Store] Could not save local run results:', error);
+      set({ projectPersistenceError: 'Run finished, but its local results could not be saved.' });
+    }
+  },
   refreshProviders: async () => {
     set({ providersLoading: true });
     try {
@@ -592,6 +868,13 @@ export const useDagStore = create((set, get) => ({
       return null;
     }
 
+    set({
+      isExecuting: true,
+      executionError: null,
+      executionProgress: { completed: 0, total: nodes.length },
+      showCompletionCelebration: false
+    });
+    const localRunId = await get().startLocalRun('graph', Object.keys(graph));
     const queuedNodes = nodes.map((node) => {
       const hasDeps = node.data.dependencies && node.data.dependencies.length > 0;
       return {
@@ -703,6 +986,7 @@ export const useDagStore = create((set, get) => ({
           tokenSavings
         }
       });
+      await get().finishLocalRun(localRunId, data.status || 'completed', results, data.billing || null);
       if (allTasksCompleted) {
         setTimeout(() => set({ showCompletionCelebration: false }), 2500);
       }
@@ -739,6 +1023,7 @@ export const useDagStore = create((set, get) => ({
           showCompletionCelebration: false,
           executionError: message
         });
+        await get().finishLocalRun(localRunId, 'failed', { error: message });
         return { status: 'failed', error: message };
       }
       if (!executionSettings.allow_fallback && get().isAuthenticated) {
@@ -774,6 +1059,7 @@ export const useDagStore = create((set, get) => ({
           showCompletionCelebration: false,
           executionError: message
         });
+        await get().finishLocalRun(localRunId, 'failed', { error: message });
         return { status: 'failed', error: message };
       }
       console.warn('[Store] Applying client simulation fallback.');
@@ -856,6 +1142,22 @@ export const useDagStore = create((set, get) => ({
           tokenSavings
         }
       });
+      await get().finishLocalRun(
+        localRunId,
+        completedCount === nodes.length ? 'completed' : 'partial_failure',
+        Object.fromEntries(
+          simulatedNodes.map((node) => [node.id, {
+            status: node.data.executionStatus,
+            text: node.data.executionOutput,
+            model: node.data.executionModel,
+            execution_mode: node.data.executionMode,
+            prompt_tokens: node.data.actualTokens?.input || 0,
+            completion_tokens: node.data.actualTokens?.output || 0,
+            total_tokens: node.data.actualTokens?.total || 0,
+            error: node.data.executionError
+          }])
+        )
+      );
       if (completedCount === nodes.length) {
         setTimeout(() => set({ showCompletionCelebration: false }), 2500);
       }
@@ -881,6 +1183,7 @@ export const useDagStore = create((set, get) => ({
       }
     };
 
+    const localRunId = await get().startLocalRun('task', [nodeId]);
     const runningNodes = get().nodes.map(n => n.id === nodeId ? {
       ...n,
       data: { ...n.data, executionStatus: 'running', executionError: null }
@@ -929,6 +1232,9 @@ export const useDagStore = create((set, get) => ({
           nodes: completedNodes,
           selectedNode: completedNodes.find(n => n.id === nodeId)
         });
+        await get().finishLocalRun(localRunId, result.status || 'completed', {
+          [nodeId]: result
+        }, resData.billing || null);
         if (result.ollama_failure) {
           set({
             ollamaFailurePrompt: {
@@ -937,9 +1243,15 @@ export const useDagStore = create((set, get) => ({
             }
           });
         }
+      } else {
+        await get().finishLocalRun(localRunId, 'failed', {
+          error: 'The execution service returned no result for this task.',
+          taskId: nodeId
+        });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Task execution failed';
+      await get().finishLocalRun(localRunId, 'failed', { error: msg, taskId: nodeId });
       const failedNodes = get().nodes.map(n => n.id === nodeId ? {
         ...n,
         data: { ...n.data, executionStatus: 'failed', executionError: msg }
