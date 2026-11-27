@@ -113,6 +113,15 @@ panel. results are labeled **LIVE**, **SIMULATED**, or **BLOCKED**, provider fai
 a category such as quota, credentials, timeout, model availability, or Ollama
 offline, and the tokenomics panel compares actual usage with the forecast.
 
+### Local projects and run history
+
+DietCode stores projects, DAG snapshots, and execution results in browser
+IndexedDB through Dexie. Open **Projects** in the header to save the current
+graph, create a named copy, reopen a project, or restore a DAG captured before
+a previous run. Changes to the active graph are autosaved locally. This data
+stays on the current app origin and device; it is not uploaded to Neon or
+synchronized across devices.
+
 ## Neon PostgreSQL ledger
 
 DietCode uses Neon-hosted PostgreSQL for the billing ledger. Add the connection

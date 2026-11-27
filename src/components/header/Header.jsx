@@ -14,7 +14,8 @@ import {
   Minimize2, 
   Square, 
   X, 
-  Loader2 
+  Loader2,
+  FolderOpen
 } from 'lucide-react';
 
 const PRESET_GOALS = [
@@ -30,7 +31,9 @@ export const Header = () => {
     setGoalInput, 
     decomposeGoal, 
     isLoading, 
-    backendStatus 
+    backendStatus,
+    setProjectsModalOpen,
+    projectPersistenceStatus
   } = useDagStore();
 
   const [inputVal, setInputVal] = useState(goalInput);
@@ -134,6 +137,16 @@ export const Header = () => {
 
       {/* Right: Window Controls */}
       <div className="header-right">
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={() => setProjectsModalOpen(true)}
+          title={`Local project storage: ${projectPersistenceStatus}`}
+          style={{ display: 'flex', alignItems: 'center', gap: 5 }}
+        >
+          <FolderOpen size={13} />
+          Projects
+        </button>
         <div className="auth-controls">
           <Show when="signed-out">
             <SignInButton mode="modal">

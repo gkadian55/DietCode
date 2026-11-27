@@ -1200,6 +1200,140 @@ select.form-input option, select.form-select option {
   margin-top: 20px;
 }
 
+.projects-modal-content {
+  width: 720px;
+  max-width: 94vw;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.projects-modal-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.projects-storage-note,
+.projects-empty-state {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.projects-storage-note {
+  margin: 0 0 12px;
+}
+
+.projects-save-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.projects-save-row .form-input {
+  min-width: 0;
+  flex: 1;
+}
+
+.projects-save-status {
+  min-height: 18px;
+  margin-top: 5px;
+  color: #fda4af;
+  font-size: 11px;
+}
+
+.projects-list {
+  display: grid;
+  gap: 8px;
+  max-height: 48vh;
+  overflow-y: auto;
+}
+
+.projects-empty-state {
+  padding: 18px 12px;
+  text-align: center;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.project-list-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.project-list-main {
+  min-width: 0;
+}
+
+.project-list-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-current-badge {
+  flex: none;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(99, 102, 241, 0.15);
+  color: #a5b4fc;
+  font-size: 8px;
+}
+
+.project-list-meta,
+.project-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-list-meta {
+  margin-top: 5px;
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.project-list-actions {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.project-history-list {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.project-history-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-history-item div {
+  display: grid;
+  gap: 3px;
+}
+
+.project-history-item small {
+  color: #64748b;
+}
+
 /* Handle styles for React Flow */
 .react-flow__handle {
   width: 10px !important;

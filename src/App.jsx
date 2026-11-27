@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useAuth } from '@clerk/react';
 import { Header } from './components/header/Header';
 import { DemoModeBanner } from './components/auth/DemoModeBanner';
@@ -11,12 +11,14 @@ import { NodeInspector } from './components/inspector/NodeInspector';
 import { AddNodeModal } from './components/modal/AddNodeModal';
 import { ExportModal } from './components/modal/ExportModal';
 import { OllamaFailureModal } from './components/modal/OllamaFailureModal';
+import { ProjectsModal } from './components/modal/ProjectsModal';
 import { useDagStore } from './store/useDagStore';
 import { setAuthTokenGetter } from './utils/apiFetch';
 
 export function App() {
-  const { checkHealth, decomposeGoal, refreshProviders, goalInput } = useDagStore();
+  const { checkHealth, refreshProviders, initializeLocalProjects } = useDagStore();
   const { getToken, isSignedIn } = useAuth();
+  const projectInitializationStarted = useRef(false);
 
   useEffect(() => {
     setAuthTokenGetter(getToken);
@@ -25,12 +27,15 @@ export function App() {
 
   useEffect(() => {
     // Initial health check and graph initialization
-    const init = async () => {
-      await checkHealth();
-      await refreshProviders();
-      await decomposeGoal(goalInput);
-    };
-    init();
+    if (!projectInitializationStarted.current) {
+      projectInitializationStarted.current = true;
+      const init = async () => {
+        await checkHealth();
+        await refreshProviders();
+        await initializeLocalProjects();
+      };
+      init();
+    }
 
     // Periodic healthcheck
     const interval = setInterval(() => {
@@ -39,6 +44,35 @@ export function App() {
     }, 4000);
 
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    let saveTimer;
+    const unsubscribe = useDagStore.subscribe((state, previousState) => {
+      if (!state.currentProjectId) return;
+      if (
+        state.nodes === previousState.nodes
+        && state.edges === previousState.edges
+        && state.goalInput === previousState.goalInput
+        && state.executionSettings === previousState.executionSettings
+        && state.aggregates === previousState.aggregates
+      ) return;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        useDagStore.getState().saveCurrentProject();
+      }, 700);
+    });
+
+    const handlePageHide = () => {
+      useDagStore.getState().saveCurrentProject();
+    };
+    window.addEventListener('pagehide', handlePageHide);
+
+    return () => {
+      clearTimeout(saveTimer);
+      window.removeEventListener('pagehide', handlePageHide);
+      unsubscribe();
+    };
   }, []);
 
   return (
@@ -57,6 +91,7 @@ export function App() {
       <AddNodeModal />
       <ExportModal />
       <OllamaFailureModal />
+      <ProjectsModal />
       <CompletionCelebration />
     </div>
   );
